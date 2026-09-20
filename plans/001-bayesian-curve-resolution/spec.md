@@ -451,6 +451,162 @@ something. Step 4 (smoothness on `C`) and step 7 (smooth σ(λ)) refine a model 
 not yet identified, so they come after. Reorder on the evidence from the gate, not on
 this table.
 
+### Gate result (step 3) — 2026-09-20
+
+**The gate does not pass.** The spectra come back essentially exactly right; the sampler
+does not mix, and the concentration intervals are about half the width they need to be.
+Both tests in `tests/test_recovery.py` are `xfail(strict=True)` recording this. Evidence
+only — what step 4 should be is not decided here.
+
+Machine: Apple Silicon, 14 cores, `numpyro.set_host_device_count(2)`, 2 chains,
+float64. Easy synthetic data: 1 run × 30 timepoints × 64 channels, σ_true = 2e-3 AU,
+which is 1.689e-4 after `fit` divides by max|A| = 11.84. Truth in the model's units:
+max c = 0.1374, and two of the 90 concentrations are exactly zero.
+
+#### What shipped
+
+| | |
+| --- | --- |
+| Configuration | `fit` defaults: τ = 0.01, 200 warmup, 200 samples, 2 chains |
+| Wall clock | 6.7 s (fit only, after `block_until_ready`) |
+| Divergences | 0, 0 |
+| Worst R̂, relabelled deterministics (`spectra`, `concentrations`, `sigma`) | **4.446** |
+| Worst R̂, raw latents (`theta_init`, `curvature`, `c_raw`), relabelled | **37.40** — reported, not asserted |
+| Min ESS (deterministics) | **1.0** |
+| Mean tree depth | 10.00 — pinned at the maximum |
+| Step size | ~1e-4 |
+| Spectral correlation per species | 1.00000, 1.00000, 1.00000 (five decimals) |
+| Concentration coverage of the 95% interval | **0.20** |
+| Posterior σ | 1.825e-4 vs true 1.689e-4 |
+
+#### Everything tried, in the order the plan prescribes
+
+All rows: 2 chains, non-centred curvature unless stated, relabelled per chain before
+pooling. "cover" is the fraction of the 90 true concentrations inside the pooled 95%
+interval. Wall clock is measured after `jax.block_until_ready`.
+
+| # | Configuration | Wall | Div | R̂ det | R̂ latent | ESS | Step | Depth | min corr | cover | med width | med \|bias\| |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | plan as written, τ=.01, warm 200 | 6.7 s | 0,0 | 6.97 | 132.2 | 1.0 | 1.2e-4 | 10 | 1.00000 | 0.200 | 7.8e-5 | 6.3e-5 |
+| B | τ=.01, warm 1000 | 31 s | 0,0 | 6.59 | 82.3 | 1.1 | 2.2e-4 | 10 | 1.00000 | 0.300 | 6.4e-5 | 4.2e-5 |
+| C | τ=.01, warm 4000 | 31 s | 0,0 | 3.47 | 51.2 | 1.1 | 1.8e-4 | 10 | 1.00000 | 0.222 | 4.3e-5 | 3.4e-5 |
+| D | τ=.03, warm 1000 | 31 s | 0,0 | 49.4 | 57.9 | 1.0 | 1.8e-4 | 10 | 0.99750 | 0.189 | 3.5e-4 | 7.3e-4 |
+| E | τ=.05, warm 1000 | 31 s | 0,0 | 8.41 | 97.7 | 1.0 | 1.6e-4 | 10 | 0.99560 | 0.178 | 5.3e-5 | 9.9e-4 |
+| G | non-centred curvature, τ=.01 | 32 s | 0,0 | 2.51 | 36.5 | 1.3 | 2.3e-4 | 10 | 1.00000 | 0.411 | 4.2e-5 | 2.3e-5 |
+| **I** | **non-centred, τ=.01, max_tree_depth=14** | **486 s** | **0,0** | **1.020** | **1.06** | **221.5** | 1.1e-4 | 14 | 1.00000 | **0.433** | 4.3e-5 | 2.3e-5 |
+| J | non-centred, τ=.01, dense_mass | 79 s | 40,11 | 1.048 | 1.22 | 18.0 | 1.5e-2 | 10 | 1.00000 | 0.422 | 4.3e-5 | 2.3e-5 |
+| K | dense_mass, accept .95, warm 2000 | 121 s | 5,0 | 1.083 | 1.12 | 8.5 | 1.0e-2 | 10 | 1.00000 | 0.433 | 4.3e-5 | 2.3e-5 |
+| L | dense_mass, τ=.03, warm 2000 | 122 s | 28,93 | 1.493 | 2.64 | 1.7 | 5.7e-3 | 10 | 1.00000 | 0.544 | 5.9e-5 | 2.6e-5 |
+| M | dense_mass, τ=.05, warm 2000 | 122 s | 0,0 | 4.347 | 5.58 | 1.1 | 3.4e-3 | 10 | 0.99999 | 0.533 | 1.2e-4 | 3.9e-5 |
+| N | dense_mass, τ=.10, warm 2000 | 122 s | 0,0 | 4.458 | 22.2 | 1.1 | 2.4e-3 | 10 | 1.00000 | 0.689 | 4.5e-5 | 1.3e-5 |
+| P | non-centred, τ=.05, max_tree_depth=14 | 486 s | 0,0 | 2.113 | — | 1.3 | 2.2e-5 | 14 | 1.00000 | 0.589 | 5.6e-5 | 2.1e-5 |
+| R | **centred in θ** (MVN on θ), τ=.01 | 44 s | 0,0 | 22.7 | — | 1.0 | 7.1e-4 | 10 | 1.00000 | 0.444 | 6.1e-5 | 2.6e-5 |
+| S | centred in θ, τ=.05 | 44 s | 0,0 | 25.9 | — | 1.0 | 8.2e-4 | 10 | 0.99756 | 0.222 | 1.2e-3 | 5.9e-4 |
+| T | centred in θ, τ=.03 | 43 s | 0,0 | 11.0 | — | 1.0 | 1.1e-3 | 10 | 0.99781 | 0.156 | 7.7e-4 | 9.7e-4 |
+
+Step by step against the prescribed order:
+
+1. **Divergences.** Zero in almost every configuration, including the converged one.
+   Divergences are not the problem; the step size is. Tree depth is pinned at the
+   maximum in every depth-10 run, which is the signature of a badly conditioned
+   posterior rather than a badly behaved one.
+2. **Raise `num_warmup`.** Monotone but weak: R̂ 6.97 → 6.59 → 3.47 for 200 → 1000 →
+   4000 warmup, with ESS stuck at ~1. Warmup cannot adapt what the chain never explores.
+3. **Tune τ from prior draws.** The plan's step 4 says a failing smoothness test means
+   τ is too large. That is wrong here, and the measurement says so plainly: prior
+   mean |∂²S| is **0.158 at every τ from 1e-4 to 1e-2**. The roughness came from the
+   initial slope of the walk being left at unit scale (sd ≈ 1.4 per channel, ramping θ
+   across ±90 over 64 channels, so softplus turns every draw into a hinge). After
+   scaling the initial slope to `τ·√n_wavelength`, τ controls roughness as intended:
+
+   | τ | 0.01 | 0.02 | 0.03 | 0.04 | 0.05 | 0.06 |
+   | --- | --- | --- | --- | --- | --- | --- |
+   | prior mean \|∂²S\| | 0.0054 | 0.0117 | 0.0196 | 0.0288 | 0.0390 | 0.0498 |
+   | prior mean peak height | 2.68 | 4.12 | 5.43 | 6.63 | 7.73 | 8.75 |
+
+   The true mean-one spectra have peak heights 8.17, 6.62, 7.28, so prior-predictive
+   matching picks **τ ≈ 0.04–0.05**, not the plan's 0.01. Raising τ does improve
+   coverage monotonically (0.43 → 0.54 → 0.59 → 0.69), but every high-τ run failed to
+   converge, so those widths are not evidence of anything. `test_spectra_are_smooth`'s
+   threshold of 0.05 caps τ at about 0.06, so the two tests pull in opposite directions
+   but do not yet conflict outright.
+4. **Re-parameterisation** (same prior, same likelihood, different coordinates; no new
+   terms). Scaling the initial slope was required to make the prior predictive pass at
+   all. Making the curvature truly non-centred — the plan's comment claimed this, its
+   code did not — improved worst R̂ from 6.59 to 2.51 for free. Sampling θ directly
+   under the equivalent multivariate normal (rows R/S/T; prior verified identical,
+   mean |∂²S| 0.0056 vs 0.0057 at τ=.01) was **worse**, R̂ 11–26. That hypothesis — that
+   the likelihood dominates and so the centred form should win — is disconfirmed.
+
+#### The one thing that did converge, and what it proves
+
+Row **I** is the only configuration in the whole search that converged: R̂ 1.020 on the
+relabelled deterministics, 1.06 on the raw latents, ESS 221, zero divergences. It took
+486 s. Its coverage is **0.433**. So the coverage shortfall is **not** an artefact of
+non-convergence; a properly converged posterior is genuinely about twice too narrow.
+
+An oracle run settles where the remaining error lives. Pinning the spectra at the truth
+and sampling only the concentrations and σ (diagnostic only, not a candidate model):
+
+| | Oracle (S pinned to truth) | Full fit, converged (row I) |
+| --- | --- | --- |
+| R̂ | 1.0017 | 1.020 |
+| Coverage | **0.922** (0.943 excluding the two exact zeros) | 0.433 |
+| Median interval width | 3.6e-5 | 4.3e-5 |
+| Median \|bias\| | 4.8e-6 | 2.3e-5 |
+| Posterior σ | 1.691e-4 (true 1.689e-4) | 1.782e-4 |
+
+So the 0.9 coverage bar **is** reachable, the softplus concentration parameterisation is
+calibrated, and the interval width is right. What breaks it is the spectral estimate:
+bias is 5× larger in the full fit, and at 2.3e-5 against a half-width of 2.15e-5 the
+posterior mean sits about one half-width from the truth, which is exactly what coverage
+0.43 looks like. Note the spectral correlation is 1.00000 to five decimals even so —
+correlation is far too blunt a measure at this SNR, where the concentrations demand the
+spectral shape to ~1e-4 relative.
+
+Two of the 90 true concentrations are exactly zero at t = 0, and `softplus` cannot reach
+zero, so those two can never be covered: a 2.2% ceiling loss, confirmed by the oracle
+(0.922 → 0.943 when they are excluded). That is a real but minor effect and not the
+cause of the failure.
+
+σ is recovered well throughout (1.69e-4 to 1.83e-4 against a true 1.689e-4), and it is
+biased slightly *high* in the unconverged runs, which widens intervals — so it flatters
+the coverage number rather than depressing it.
+
+#### Deviations from the plan
+
+Recorded in full in the commit message for `model.py` / `inference.py`. In brief: the
+initial-slope scaling and the truly non-centred curvature (both re-expressions of the
+same model, both forced by measurement); `extra_fields=("diverging", "num_steps")` on
+`fit`; and in the tests, the units conversion of the truth into the model's scaled units,
+per-chain relabelling before pooling and before R̂, one shared module-scoped fit, and
+stopping the clock after `jax.block_until_ready` (timing `mcmc.run` alone reports ~1 s
+for a 31 s fit, because JAX dispatches asynchronously).
+
+Two further notes on the plan's own test code. The units bug in the concentration
+coverage assertion made it fail with certainty as written. And the per-chain labelling
+disagreement it did not anticipate is real: the two chains were observed settling on
+`[2,1,0]` and `[1,0,2]` in one run and agreeing on `[2,0,1]` in another, so pooled R̂
+without alignment is sometimes spuriously large and sometimes not — the worst kind of
+flake.
+
+#### What this run does NOT tell us
+
+- **Nothing about hard or overlapping data.** This is the easy regime only: three
+  well-separated bands, uniform noise, one run. §4 already says success here would say
+  nothing about hard cases; failure here says the model or the sampler is broken, which
+  is what was found.
+- **Nothing about whether the width is honest** (principle 6). The posterior is too
+  narrow relative to the *truth*, which is a different statement from being narrower
+  than the feasible band. No MCR-BANDS-style calculation was run, so the comparison the
+  principle demands has not been done, in either direction.
+- **Nothing about τ at convergence.** Every τ above 0.01 failed to mix, so the
+  prior-predictive-preferred τ ≈ 0.05 has never been evaluated with a converged chain.
+  The single most informative missing measurement.
+- **Nothing about multi-run, closure, references or selectivity** — none are in v0.
+- **Nothing about real fixtures**; there is still no reader (ADR 0002).
+- **Nothing about the cost at 551 channels.** All of this is at the binned 64.
+
 ---
 
 ## 8. Practical notes for getting the first fit to run
