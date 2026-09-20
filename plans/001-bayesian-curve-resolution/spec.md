@@ -49,12 +49,13 @@ the left column runs.
 | Baseline | **none** | smooth per-run baseline |
 | Reference spectra | **none** — carried in the dataset, not used by the model | soft likelihood terms with per-species σ_ref |
 | Concentration profiles | **independent per timepoint**, non-negative, no smoothness | smoothness prior; then extents; then ODE |
-| Spectral smoothness | 2nd-order RW **directly on the binned wavelength grid**, τ fixed | Matérn GP with a learnable length-scale (affordable at 64 channels); spline basis if sampling is too slow; unimodality per band |
+| Spectral smoothness | 2nd-order RW **directly on the binned wavelength grid**, τ fixed | Matérn GP with a learnable length-scale (affordable at 64 channels); spline basis if sampling is too slow |
 | Runs | array carries the run axis; **fit with n_run = 1** | shared S across runs, pooled fit |
 | Wavelength grids | **must already match** — raise otherwise | resample at construction |
 | Masking | implemented, but **v0 requires all-True** | ragged runs, padded |
 | Rank diagnostic | none | effective-rank report per run and pooled |
 | Species count | **given by the caller** | shrinkage prior, posterior over count |
+| Selectivity windows | **none** | pin a species where only it absorbs; the controls make the windows findable |
 | Test data | **easy synthetic**: well-separated spectra, low noise | overlapping spectra, realistic noise, real fixtures |
 | Wavelength resolution | **binned to ~64 channels** | full 1 nm grid, once it is affordable |
 
@@ -270,11 +271,29 @@ Every one of these sits in the **Later** column of §1, while the smoothness ref
 sit in v0. That ordering is right for "make it run", and wrong for "make it mean
 something" — so once the gate in §7 passes, the next steps are 5 and 6, not 7.
 
-Note also what canonical MCR actually constrains `S` with (de Juan & Tauler 2020):
-non-negativity, unimodality, closure, selectivity and equality to known spectra.
-Smoothness is an available secondary constraint, not the headline one. v0 has
-non-negativity and normalisation; unimodality per band is a cheap addition worth trying
-before anything exotic.
+Note also what canonical MCR constrains with (de Juan & Tauler 2020): non-negativity,
+unimodality, closure, selectivity and equality to known spectra. Smoothness is an
+available secondary constraint, not the headline one. v0 has non-negativity and
+normalisation.
+
+**Unimodality does not apply to the spectra in this system.** It means literally one
+maximum, and cobalamins have the classic γ band near 350–390 nm plus α/β bands near
+470–560 nm. The resolved spectra in `tests/data/probe_a/reference_mcrals_figure.png`
+carry two annotated maxima each for cob(I) (385, 550 nm), cob(II) (381, 472 nm) and
+Co(III) aquo/hydroxo (352, 523 nm). Constraining `S` to be unimodal would forbid the
+correct answer. Never apply it here.
+
+Its legitimate home is the **concentration profiles**: an intermediate in a consecutive
+scheme rises and falls once, which is standard MCR practice and visibly true of cob(II)
+and Co(III) in panel B of that figure. Even there it is an assumption about the
+mechanism that a hard kinetic model supersedes — and it fails for any network where a
+species is consumed and later regenerated.
+
+The cheap strong constraint on `S` for this system is **selectivity / local rank**: a
+wavelength window in which only one species absorbs pins that species outright. The
+controls make those windows findable — Ti(III) citrate alone gives the 351 nm region,
+and the α/β region above ~500 nm is cobalamin-only. Worth trying before anything exotic,
+and unlike smoothness it genuinely narrows the feasible set.
 
 ### A branch not taken yet: a parametric peak model
 
