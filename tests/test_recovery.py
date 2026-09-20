@@ -1,11 +1,12 @@
 """The gate: does the model recover known spectra and profiles from easy data?
 
-It does not, and both tests below are strict xfails recording that. The v0 model
-resolves the spectra essentially perfectly (correlation 1.00000 to five decimals) and
-recovers sigma, but NUTS does not mix on it and the concentration credible intervals are
-too narrow by roughly a factor of two. See ``spec.md`` §7 "Gate result (step 3)" for the
-full evidence and for what was tried. ``strict=True`` so that whichever change finally
-fixes this turns these into failures and forces the marks off.
+Half of it. Spectral recovery passes and is asserted normally below -- the resolved
+spectra match their species to a correlation of 1.00000 in every configuration tried.
+What fails is the other half: NUTS does not mix on this model, and the concentration
+credible intervals are too narrow by roughly a factor of two even when it does. Those
+two are ``xfail(strict=True)``, so whichever change finally fixes them turns the xfail
+into a failure and forces the marks off. See ``spec.md`` §7 "Gate result (step 3)" for
+the full evidence and for what was tried.
 """
 
 import time
@@ -16,8 +17,10 @@ import jax.numpy as jnp
 import pytest
 from jax import Array
 from numpyro.diagnostics import summary
+from numpyro.infer import MCMC
 
 from spectrahandler.curve_resolution import fit, make_easy_dataset
+from spectrahandler.curve_resolution.inference import _absorbance_scale
 
 # Species axis of each sampled site, in the (draw, ...) layout one chain has.
 _SPECIES_AXIS = {
@@ -118,7 +121,7 @@ def fitted() -> Fitted:
     # fitted concentrations are in those non-dimensional units. Move the truth into them
     # rather than moving the model: comparing uM against a scaled fit would fail with
     # certainty and would say nothing about whether the model works.
-    scale = float(jnp.nanmax(jnp.abs(dataset.absorbance)))
+    scale = _absorbance_scale(dataset)
     return Fitted(
         spectra=relabelled["spectra"],
         concentrations=relabelled["concentrations"],
@@ -129,7 +132,7 @@ def fitted() -> Fitted:
 
 
 def _print_evidence(
-    mcmc: object,
+    mcmc: MCMC,
     relabelled: dict[str, Array],
     permutations: list[Array],
     wall_clock: float,
@@ -145,7 +148,7 @@ def _print_evidence(
     det = summary(deterministics, prob=0.95)
     lat = summary(latents, prob=0.95)
     worst_det = max(float(jnp.nanmax(s["r_hat"])) for s in det.values())
-    extra = mcmc.get_extra_fields(group_by_chain=True)  # ty: ignore[unresolved-attribute]
+    extra = mcmc.get_extra_fields(group_by_chain=True)
     labels = [[int(i) for i in p] for p in permutations]
 
     print("\n--- gate evidence ------------------------------------------------")
@@ -166,11 +169,13 @@ def _print_evidence(
     return worst_det
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gate failure: spectra recover, but concentration coverage is ~0.43, not >0.9",
-)
-def test_recovers_easy_synthetic_data(fitted: Fitted) -> None:
+def test_resolves_the_pure_spectra(fitted: Fitted) -> None:
+    """The half of the gate that passes, kept under test in its own right.
+
+    Not merged with the coverage check below: bundling a passing assertion into an
+    xfailed test takes it out of the suite entirely, and this one guards the part of the
+    model that demonstrably works.
+    """
     # Chains are aligned to the truth, so pooling them compares like with like.
     spectra = _pool(fitted.spectra).mean(axis=0)
 
@@ -180,6 +185,14 @@ def test_recovers_easy_synthetic_data(fitted: Fitted) -> None:
         correlation = jnp.corrcoef(resolved, true)[0, 1]
         assert float(correlation) > 0.98, "resolved spectrum does not match its species"
 
+
+@pytest.mark.xfail(strict=True, reason="gate failure: concentration coverage is ~0.43, not >0.9")
+def test_concentration_intervals_cover_the_truth(fitted: Fitted) -> None:
+    """The half that fails. Converged or not, the intervals are about half wide enough.
+
+    Not a convergence artefact: the one configuration that reached R-hat 1.02 with an
+    ESS of 221 still covered only 0.433. See ``spec.md`` §7.
+    """
     lower, upper = jnp.percentile(_pool(fitted.concentrations), jnp.array([2.5, 97.5]), axis=0)
     inside = (fitted.true_concentrations >= lower) & (fitted.true_concentrations <= upper)
     assert float(inside.mean()) > 0.9, "truth outside the 95% interval too often"

@@ -38,8 +38,12 @@ def curve_resolution_model(
         mask: True where measured, shape ``(n_run, n_time)``.
         n_wavelength: Number of wavelength channels, after binning.
         n_species: Number of components to resolve.
-        tau: Fixed scale of the random walk curvature, **per channel**. It therefore
-            scales with the square of the bin width: rebinning changes it.
+        tau: Fixed scale of the random walk, **per channel**. It sets the curvature
+            directly, and the initial slope as ``tau * sqrt(n_wavelength)`` -- the
+            spread the walk itself accumulates over the grid, so that no channel is
+            privileged and ``tau`` is the single knob for how far a spectrum may depart
+            from flat. As a curvature it scales with the square of the bin width:
+            rebinning changes it.
         sigma_scale: Scale of the ``HalfNormal`` prior on the noise standard deviation.
     """
     n_run, n_time = mask.shape
