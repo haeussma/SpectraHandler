@@ -49,7 +49,7 @@ the left column runs.
 | Baseline | **none** | smooth per-run baseline |
 | Reference spectra | **none** — carried in the dataset, not used by the model | soft likelihood terms with per-species σ_ref |
 | Concentration profiles | **independent per timepoint**, non-negative, no smoothness | smoothness prior; then extents; then ODE |
-| Spectral smoothness | 2nd-order RW **directly on the binned wavelength grid**, τ fixed | spline basis if sampling is too slow; τ sampled hierarchically; possibly GP over λ |
+| Spectral smoothness | 2nd-order RW **directly on the binned wavelength grid**, τ fixed | Matérn GP with a learnable length-scale (affordable at 64 channels); spline basis if sampling is too slow; unimodality per band |
 | Runs | array carries the run axis; **fit with n_run = 1** | shared S across runs, pooled fit |
 | Wavelength grids | **must already match** — raise otherwise | resample at construction |
 | Masking | implemented, but **v0 requires all-True** | ragged runs, padded |
@@ -217,6 +217,82 @@ A straight line in wavelength is *not* an option for `S` — a line cannot repre
 absorption band, so the model could not express the thing it is fitting. Linear models
 belong to the baseline, which v0 does not have at all.
 
+### What the prior on `S` actually is, and what it is for
+
+Spline, random walk and Gaussian process are **not three competing choices** — they are
+three parameterisations of one smoothness prior, differing in cost, not in what they
+express:
+
+| Form | Relationship | Cost at `n_wavelength` |
+| --- | --- | --- |
+| 2nd-order random walk on the grid | discrete integrated Wiener process | O(n), sparse, what v0 uses |
+| P-spline (B-spline basis + difference penalty) | the same penalty on `k << n` coefficients | O(k) |
+| GP with an integrated-Wiener kernel | the continuous object; its posterior mean **is** a cubic smoothing spline | O(n³) dense |
+
+The equivalence is exact, not loose: a second-order random walk is the state-space form
+of that GP, and the posterior mean of that GP is the cubic smoothing spline
+(Kimeldorf & Wahba). A P-spline is the same penalty applied to basis coefficients. So
+"are we fitting a spline?" and "should we use a GP?" have the same answer — we are
+already doing both, in the cheapest available form.
+
+**A Matérn GP is genuinely affordable here**, and worth considering at step 4+. At the
+binned 64 channels a dense 64×64 Cholesky per species per gradient evaluation is
+nothing; at the raw 551 it is not. What it buys over the fixed-`τ` walk is a
+**length-scale that is interpretable and learnable** — it is a band width in nm, so it
+takes a real prior ("UV/Vis bands are 15–30 nm wide") and can be read off the posterior.
+What it costs is a hyperparameter with a known funnel pathology. v0 keeps `τ` fixed for
+that reason; the GP is the principled upgrade, not a different idea.
+
+### The prior on `S` is regularisation, not identification
+
+This is the part that matters, and it is easy to get backwards.
+
+Rotational ambiguity is `D = C·Sᵀ = (C·T)(S·T⁻ᵀ)ᵀ`. **A rotation of smooth spectra is
+still smooth.** A smoothness prior therefore barely shrinks the feasible set — it makes
+the posterior geometry tractable and stops the spectra coming out spiky, and that is all
+it does. No amount of tuning `τ`, and no upgrade from walk to GP, addresses
+identifiability.
+
+What the literature says does address it, in rough order of strength:
+
+- **Several runs sharing one `S`.** Called "the strongest practical constraint against
+  rotational ambiguity" in `~/code/mcrals`, and it is why the run axis exists in §3.
+- **A hard kinetic model on `C`.** Removes the free-profile problem outright, and is the
+  stage after this one.
+- **Anchored or known reference spectra.** Already carried in the dataset (§3), unused.
+- **Selectivity / local rank** — a wavelength region where only one species absorbs.
+- Ambiguity is driven by **spectral overlap**: with low overlap the profiles come out
+  nearly unique, with high overlap substantial ambiguity survives every soft constraint
+  (Olivieri 2025, doi:10.1016/j.aca.2025.343897; de Juan & Tauler 2020,
+  doi:10.1016/j.aca.2020.02.048).
+
+Every one of these sits in the **Later** column of §1, while the smoothness refinements
+sit in v0. That ordering is right for "make it run", and wrong for "make it mean
+something" — so once the gate in §7 passes, the next steps are 5 and 6, not 7.
+
+Note also what canonical MCR actually constrains `S` with (de Juan & Tauler 2020):
+non-negativity, unimodality, closure, selectivity and equality to known spectra.
+Smoothness is an available secondary constraint, not the headline one. v0 has
+non-negativity and normalisation; unimodality per band is a cheap addition worth trying
+before anything exotic.
+
+### A branch not taken yet: a parametric peak model
+
+Instead of a nonparametric prior, each spectrum could be a **sum of a few Gaussians in
+wavenumber** — bands are approximately Gaussian in energy, not in wavelength. Roughly
+three parameters per band, so comparable in size to the spline it would replace, but
+every parameter is interpretable, and literature band positions become priors
+(cob(I) near 385 and 550 nm, and so on — the annotations in
+`tests/data/probe_a/reference_mcrals_figure.png` are exactly these).
+
+Crucially this **does** attack rotational ambiguity, because a rotated mixture of
+few-Gaussian spectra is generally not itself a few-Gaussian spectrum. The cost is
+misspecification when band shapes are not Gaussian, and a much stronger commitment to
+the chemistry being right.
+
+Not in v0 — it is a different model, not a simplification of this one. Worth an explicit
+comparison once the gate passes.
+
 **Why one shared σ is defensible as a starting point:** it is wrong in a known direction.
 Real DAD noise varies with wavelength and grows with absorbance, so a single σ over-weights
 noisy regions and under-weights clean ones. On easy synthetic data with uniform noise it is
@@ -302,9 +378,9 @@ stay in `tests/data/` with the provenance README already there.
 | 2 | Prior predictive | Prior draws look like plausible UV/Vis spectra; `τ` picked from them |
 | 3 | **v0 model + NUTS, n_run = 1** | **Synthetic round-trip recovers `S` and `C` within CI. This is the milestone.** |
 | 4 | Smoothness on `C`, sampled `τ` | Posterior narrows or stays equal; no divergences |
-| 5 | Reference spectra terms | Ablation: posterior width with vs. without |
-| 6 | Multi-run, shared `S` | Posterior narrows measurably vs. single run |
-| 7 | Smooth σ(λ) | Changes conclusions or does not — either is a result |
+| 5 | Reference spectra terms | Ablation: posterior width with vs. without. Attacks rotational ambiguity directly |
+| 6 | Multi-run, shared `S` | Posterior narrows measurably vs. single run. The strongest soft constraint there is — consider promoting it above 4 |
+| 7 | Smooth σ(λ) | Changes conclusions or does not — either is a result. **Lowest priority**: it refines the noise model, not identifiability |
 | 8 | Harder synthetic: overlapping spectra, realistic noise | Honest failure modes documented |
 
 Step 3 is the gate. Nothing past it is written until it passes. [`plan.md`](plan.md)
@@ -348,6 +424,13 @@ Still open:
   with the square of the bin width: rebinning changes it.
 - At what channel count does the random walk over wavelengths become the bottleneck, and
   is a spline basis then worth reintroducing? Profile before assuming.
+- Should step 6 (multi-run, shared `S`) be promoted ahead of step 4? It is the strongest
+  constraint against rotational ambiguity and the data for it already exists — three
+  simultaneous runs in `tests/data/probe_a/`. The counter-argument is that it needs the
+  reader question in ADR 0002 settled first.
+- Is a parametric peak model the better answer for this chemistry than any nonparametric
+  prior? It would break rotational ambiguity rather than merely regularise. Decide by
+  comparison after the gate, not by argument.
 - Does `C` need a smoothness prior at all once kinetics arrive, or does the ODE replace it
   entirely? Probably the latter — so step 4 may be throwaway.
 - Whether v0's single σ should be sampled or fixed to a measured blank estimate. Fixed is
