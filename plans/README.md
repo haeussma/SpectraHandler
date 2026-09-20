@@ -1,33 +1,41 @@
 # Implementation plans
 
-One file per plan, `NNN-slug.md`, numbered in the order they were started.
+One **directory** per plan, `NNN-slug/`, numbered in the order they were started.
+
+```
+plans/001-bayesian-curve-resolution/
+  spec.md       # what we are building and why it is shaped this way
+  plan.md       # the executable task breakdown, derived from the spec
+  research.md   # prior art and background, when there is any
+```
 
 A plan is **what we are going to do, in order**. It is working material: it gets checked
-off as slices land, and it is deleted once the work is done and the code speaks for
-itself. Do not curate plans — a stale plan is worse than no plan.
+off as tasks land, and the directory is deleted once the work is done and the code speaks
+for itself. Do not curate plans — a stale plan is worse than no plan.
 
-Decisions do not live here. The moment a plan contains a choice with lasting
-consequence ("hard-modelling, not soft MCR"), that choice becomes an ADR in
-[`../docs/decisions/`](../docs/decisions) and the plan links to it. The plan dies; the ADR
-does not.
+## spec.md and plan.md are different documents
 
-Structure that has earned its place:
+The split is not bureaucracy; the two are read by different people at different times.
 
-```markdown
-# NNN — <what this builds>
+**`spec.md`** argues. It states scope and non-goals, the data contract, the model, the
+complexity ladder, and the open questions. A human reads it to decide whether the
+approach is right. It is written once and amended as evidence arrives.
 
-## Goal
-One paragraph. What is true when this is finished that is not true now.
+**`plan.md`** executes. Numbered tasks, each with files, interfaces, a failing test, the
+implementation, the command to run, and a commit. It follows the `superpowers:writing-plans`
+format and is executed task-by-task by `superpowers:subagent-driven-development` or
+`superpowers:executing-plans`. An agent reads it with no other context, so it contains
+real code — never "TBD", never "add error handling", never "similar to Task 2".
 
-## Non-goals
-What this deliberately does not do. Usually the more useful list.
+Write `plan.md` only as far as the next real gate. A plan for work whose shape depends on
+the outcome of earlier work is fiction.
 
-## Slices
-Each slice is independently landable and leaves the repo green.
+## Decisions do not live here
 
-- [ ] 1. ...
-- [ ] 2. ...
+The moment a plan contains a choice with lasting consequence — "dimension order is
+(run, time, wavelength)" — that choice becomes an ADR in
+[`../docs/decisions/`](../docs/decisions) and both documents link to it. The plan dies;
+the ADR does not.
 
-## Open questions
-Things that block a slice, and who or what resolves them.
-```
+An ADR that is still `status: proposed` and that a task depends on is a **blocking
+precondition**, and `plan.md` says so at the top. Do not start the task.

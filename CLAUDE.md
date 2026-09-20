@@ -95,7 +95,8 @@ on GitHub Pages. Internal working material never goes there.
 
 | Document | Goes in | Public | Lifetime |
 |---|---|---|---|
-| Implementation plan — sequenced work | `plans/NNN-slug.md` | no | delete when done |
+| Spec — what we are building, and why | `plans/NNN-slug/spec.md` | no | delete when done |
+| Plan — executable task breakdown | `plans/NNN-slug/plan.md` | no | delete when done |
 | ADR — a decision with lasting consequence | `docs/decisions/NNNN-slug.md` | no | forever |
 | The science: methods, concepts, papers | `~/brain/wiki/methods/<slug>.md` | no | forever |
 | Which methods this repo relies on | `~/brain/projects/spectrahandler.md` | no | forever |
@@ -112,6 +113,9 @@ the matching brain page in the other direction.
 
 **Do not start building a feature without a plan.** If one does not exist for the work at
 hand, write it first — `/brainstorm` if the shape is still open, `/write-plan` if it is not.
+A plan directory holds a `spec.md` that argues and a `plan.md` that executes; see
+[`plans/README.md`](plans/README.md). A task whose ADR is still `status: proposed` is
+blocked, not ready.
 
 ## Tests
 

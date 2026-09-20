@@ -12,3 +12,6 @@ wheels/
 # Tool caches
 .ruff_cache/
 .pytest_cache/
+
+# Synthetic fixtures are regenerated from a seed, never committed.
+tests/data/synthetic/
