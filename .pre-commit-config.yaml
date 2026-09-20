@@ -2,8 +2,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # tests/data holds raw instrument exports. Their trailing blank line separates
+      # the data block from the footer -- stripping it corrupts the fixture.
       - id: end-of-file-fixer
+        exclude: ^tests/data/
       - id: trailing-whitespace
+        exclude: ^tests/data/
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
