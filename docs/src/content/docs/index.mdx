@@ -1,0 +1,36 @@
+---
+title: SpectraHandler
+description: Spectral deconvolution for reaction data, on JAX and NumPyro.
+template: splash
+hero:
+  tagline: Deconvolve overlapping spectra from reaction time courses — differentiable, vectorised, and with honest uncertainties.
+  actions:
+    - text: Install
+      link: /SpectraHandler/guides/installation/
+      icon: right-arrow
+    - text: Source on GitHub
+      link: https://github.com/haeussma/SpectraHandler
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+	<Card title="JAX all the way down" icon="rocket">
+		Every model is a pure, JIT-compilable function. Gradients come for free, so fits
+		converge without hand-derived Jacobians.
+	</Card>
+	<Card title="Uncertainties, not point estimates" icon="approve-check">
+		NumPyro gives posteriors over peak parameters and concentrations, so you can report
+		credible intervals instead of a lone least-squares number.
+	</Card>
+	<Card title="Built for reaction data" icon="setting">
+		Spectra arrive as time series. Component spectra are shared across timepoints and
+		concentrations evolve — the API is shaped around that, not around single scans.
+	</Card>
+	<Card title="Reproducible by construction" icon="seti:python">
+		Explicit PRNG keys, float64 throughout, and a committed lockfile. The same input
+		gives the same answer on someone else's machine.
+	</Card>
+</CardGrid>

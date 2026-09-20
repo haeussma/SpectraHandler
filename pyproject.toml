@@ -1,0 +1,68 @@
+[project]
+name = "spectrahandler"
+version = "0.1.0"
+description = "Spectral deconvolution for reaction data"
+readme = "README.md"
+authors = [
+    { name = "Max Haeussler", email = "max.haeussler@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "jax>=0.11.2",
+    "numpy>=2.5.3",
+    "numpyro>=0.22.0",
+]
+
+[project.scripts]
+spectrahandler = "spectrahandler:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16",
+    "ty>=0.0.82",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle + pyflakes
+    "I",            # isort
+    "UP",           # pyupgrade
+    "B",            # bugbear
+    "SIM",          # flake8-simplify
+    "ANN",          # flake8-annotations -- every def fully annotated
+    "D",            # pydocstyle
+    "PYI",          # stub/typing correctness
+    "NPY",          # numpy-specific rules
+    "RUF",
+]
+ignore = [
+    "D107",  # __init__ docstring; document on the class instead
+    "D417",  # not every param needs an Args: entry
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "ANN"]
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.rules]
+dynamic-function-decorator-return = "error"
+missing-type-argument = "error"
+possibly-unresolved-reference = "warn"
+unsound-return-statement = "error"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
