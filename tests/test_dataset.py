@@ -66,8 +66,32 @@ def test_time_ignores_order_of_masked_out_points() -> None:
         ({"run_ids": ("r0", "r1")}, "run_ids"),
         ({"absorbance": jnp.zeros((1, 3, 5))}, "shape"),
         ({"mask": jnp.zeros((1, 3), dtype=bool)}, "at least one"),
+        # Strictly increasing but not finite: must hit the finiteness check, not the
+        # monotonicity one (jnp.inf > every finite value, so "increasing" alone
+        # wouldn't catch this).
+        ({"wavelength": jnp.array([0.0, 1.0, 2.0, jnp.inf])}, "finite"),
+        ({"initial_state": jnp.array([[jnp.nan, 1.0]])}, "finite"),
     ],
 )
 def test_validation_rejects(overrides: dict[str, Array], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _minimal(**overrides)
+
+
+def test_direct_construction_rejects_unsorted_species() -> None:
+    """create() always sorts species; the raw constructor must reject it itself."""
+    with pytest.raises(ValueError, match="sorted"):
+        SpectralDataset(
+            absorbance=jnp.zeros((1, 3, 4)),
+            time=jnp.arange(3.0).reshape(1, 3),
+            wavelength=jnp.arange(4.0),
+            mask=jnp.ones((1, 3), dtype=bool),
+            species=("b", "a"),
+            initial_state=jnp.array([[10.0, 20.0]]),
+            reference_spectra=jnp.full((2, 4), jnp.nan),
+            reference_sigma=jnp.full((2,), jnp.nan),
+            run_ids=("r0",),
+            time_unit="h",
+            wavelength_unit="nm",
+            concentration_unit="uM",
+        )

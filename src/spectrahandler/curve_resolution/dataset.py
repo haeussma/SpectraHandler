@@ -120,8 +120,8 @@ class SpectralDataset:
         Raises:
             ValueError: If any contract in the class docstring is violated.
         """
-        if len(set(species)) != len(species):
-            raise ValueError(f"species must be unique, got {species!r}")
+        # Duplicates are not rejected here: sorting is well-defined even with ties,
+        # and __post_init__'s _validate is the single source of truth for uniqueness.
         order = sorted(range(len(species)), key=lambda i: species[i])
         index = jnp.asarray(order, dtype=int)
         n_species, n_wavelength = len(species), wavelength.shape[0]
@@ -142,9 +142,7 @@ class SpectralDataset:
             wavelength=jnp.asarray(wavelength),
             mask=jnp.ones(time.shape, dtype=bool) if mask is None else jnp.asarray(mask),
             species=tuple(species[i] for i in order),
-            initial_state=jnp.asarray(initial_state)[:, index]
-            if len(species)
-            else jnp.asarray(initial_state),
+            initial_state=jnp.asarray(initial_state)[:, index],
             reference_spectra=refs,
             reference_sigma=ref_sigma,
             run_ids=tuple(run_ids),
