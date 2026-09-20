@@ -38,6 +38,47 @@ These are not restated per task. From [`CLAUDE.md`](../../CLAUDE.md):
 
 ---
 
+## 0.5 Principles
+
+These govern every version. A change that violates one of them is wrong, however well it
+fits.
+
+**1. Beer–Lambert bilinearity is the model, and it is an assumption with a stated limit.**
+`A(t, λ) = Σ_k c_k(t) · ε_k(λ) · l`. Linear in both factors, which is the entire
+structure being exploited. It fails above roughly 1.5 AU — the `1a` fixture is kept
+precisely because it violates this.
+
+**2. Every parameter is a physical quantity with units, or it is a nuisance term that has
+to justify itself.** `ε` in M⁻¹cm⁻¹, `c` in µM. A parameter that means nothing cannot be
+given a prior, checked against literature, or reported.
+
+**3. Fix the scale with chemistry, not convention.** `C·a, S/a` fits identically, so
+something must pin it. A unit-sum normalisation does that but leaves `C` in arbitrary
+units. **Closure** — `Σ_{k ∈ pool} c_k(t) = c_total` over a conserved pool — does the same
+job and leaves `C` in µM. Same number of constraints, strictly more meaning. Prefer it
+wherever a total is actually known.
+
+**4. Non-negativity yields a band of solutions, not a point** (Lawton & Sylvestre 1971).
+This is the field's founding result and it is not a numerical nuisance to be tuned away.
+Plan to report the band.
+
+**5. Smoothness regularises; only structure identifies.** A rotation of smooth spectra is
+still smooth. Closure, selectivity, shared spectra across runs, known references and a
+kinetic model narrow the feasible set. Priors on shape do not.
+
+**6. A narrow posterior on an ambiguous problem is a lie.** If the rotational ambiguity is
+real and the posterior is tight, the tightness came from the prior, not from the data.
+The point of doing this in NumPyro rather than ALS is **an honest width**, not a
+narrower answer. The check is concrete: the posterior should contain the feasible band an
+MCR-BANDS-style calculation returns. Much narrower means the priors are doing the work,
+and that has to be said out loud.
+
+**7. Validate where the answer is known.** Synthetic data with known truth first; then the
+controls, which are an experimental version of the same idea — Probe c contains no
+cobalamin, so any cobalamin species resolved into it is an artefact.
+
+---
+
 ## 1. Complexity ladder
 
 The whole spec in one table. Left column is v0; nothing in the right column is built until
@@ -405,6 +446,11 @@ stay in `tests/data/` with the provenance README already there.
 Step 3 is the gate. Nothing past it is written until it passes. [`plan.md`](plan.md)
 covers steps 0–3 only, for that reason.
 
+**Steps 5 and 6 together are v1** (§10), and they are the ones that make the result mean
+something. Step 4 (smoothness on `C`) and step 7 (smooth σ(λ)) refine a model that is
+not yet identified, so they come after. Reorder on the evidence from the gate, not on
+this table.
+
 ---
 
 ## 8. Practical notes for getting the first fit to run
@@ -455,3 +501,61 @@ Still open:
 - Whether v0's single σ should be sampled or fixed to a measured blank estimate. Fixed is
   simpler and prevents σ absorbing model misfit. `tests/data/probe_a/` has a buffer blank
   that would give a real number for this.
+
+---
+
+## 10. v1 — the simplest model that makes mathematical sense
+
+v0 is the simplest thing that *runs*. v1 is the simplest thing that is *defensible*, and
+the difference is two changes, both of which **remove** arbitrariness rather than adding
+machinery.
+
+```
+S_k(λ) ≥ 0, smooth                      # softplus + RW2, unchanged from v0
+C ≥ 0                                   # softplus, unchanged
+Σ_{k ∈ pool} c_k(t) = c_total           # CLOSURE replaces the arbitrary normalisation
+S shared across runs                    # n_run > 1, one spectra matrix
+σ ~ HalfNormal(σ_scale)                 # still one scalar
+A ~ Normal(C @ S.T, σ)
+```
+
+**Change 1: closure instead of normalisation** (principle 3). v0 normalises each spectrum
+to mean one, which pins the scale but leaves `C` in arbitrary units. Closure pins it with
+a number that was measured: total cobalamin is 12.5 µM, from 25 µM hydroxocobalamin
+diluted 2:1. `C` then comes out in µM and can be compared to anything.
+
+Closure is **per conserved pool, not global**. In the Probe a system there are two pools:
+
+| Pool | Species | Total |
+| --- | --- | --- |
+| cobalamin | cob(I), cob(II), Co(III) aquo/hydroxo, methylcobalamin | 12.5 µM, known |
+| titanium | Ti(III) citrate, Ti oxidised | not known |
+
+So closure fixes the cobalamin block in real units, and the titanium block still needs a
+normalisation to fix its own scale. That asymmetry is honest — it reflects what was
+actually measured — and it is exactly what `~/code/mcrals` does with
+`closure_columns=(0, 1, 2, 4)`.
+
+**Change 2: shared spectra across runs** (principle 5). This is the strongest soft
+constraint available, the reason the run axis exists in §3, and the data already exists:
+Probes a, c and d ran simultaneously in the cell changer against one set of pure spectra.
+A component is then credible only if it appears where the chemistry that makes it was
+present — Probe c has no cobalamin, so it is a direct falsification test.
+
+**What v1 still does not have,** and why that is the honest boundary of this stage: no
+kinetic model. Rotational ambiguity is reduced by closure and sharing, not eliminated.
+Principle 6 therefore applies in full — v1's deliverable is a width, and that width
+should be compared against a feasible-band calculation before anyone quotes it.
+
+### The v1 acceptance test
+
+Not "does it converge". Three things, in order:
+
+1. **Recovers synthetic truth**, as v0 does, with closure active and `C` in the right
+   units rather than an arbitrary scale.
+2. **Probe c stays empty.** Fit a, c, d jointly; the resolved cobalamin concentrations in
+   the Ti-citrate-only run must be indistinguishable from zero. This is the experimental
+   version of principle 7, it costs nothing, and it is the check that would have caught
+   the two misreadings recorded in `tests/data/README.md`.
+3. **The posterior width is defended, not just reported.** State whether it contains the
+   feasible band, or state that the comparison has not been done.
