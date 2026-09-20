@@ -3,8 +3,13 @@
 from pathlib import Path
 
 import jax
+import numpyro
 import pytest
 from jax import Array
+
+# Must precede any JAX backend initialisation, or num_chains=2 silently falls back to
+# running the chains one after the other.
+numpyro.set_host_device_count(2)
 
 # Spectral fitting in float32 silently loses precision in least-squares residuals.
 jax.config.update("jax_enable_x64", True)
