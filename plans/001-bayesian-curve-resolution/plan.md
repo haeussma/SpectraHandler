@@ -38,11 +38,16 @@ requirements implicitly include these.
 - The pre-commit and Claude hooks run ruff and ty on every edit. A step is not done
   until `uv run ruff check . && uv run ty check && uv run pytest` is clean.
 
-## Blocking precondition
+## Preconditions
 
-[ADR 0001](../../docs/decisions/0001-array-layout-and-canonical-ordering.md) is **proposed,
-not accepted.** It fixes the array layout and the alphabetical species order that every
-task below assumes. Accept it or change it before starting Task 0.
+[ADR 0001](../../docs/decisions/0001-array-layout-and-canonical-ordering.md) — the array
+layout and alphabetical species order every task assumes — is **accepted**. Nothing
+blocks Task 0.
+
+[ADR 0002](../../docs/decisions/0002-scope-boundary-against-mcrals.md), where data
+loading lives, is **unresolved and does not block this plan**: Tasks 0–2 use synthetic
+data only. Do not try to read `tests/data/` — those fixtures are deliberately
+unreachable until that decision is made.
 
 ## Scope
 
@@ -727,22 +732,29 @@ comparing. Skipping that step makes the test flake roughly two times in three.
 import jax
 import jax.numpy as jnp
 from jax import Array
+from numpyro.diagnostics import summary
 
 from spectrahandler.curve_resolution import fit, make_easy_dataset
 
 
+def _normed(a: Array) -> Array:
+    """Rows scaled to unit norm, so a dot product is a correlation."""
+    return a / jnp.linalg.norm(a, axis=-1, keepdims=True)
+
+
 def _match(fitted: Array, truth: Array) -> Array:
-    """Greedy permutation matching fitted components to true ones by correlation.
+    """For each TRUE component, the index of the fitted component matching it best.
 
     Component order is not identified by the likelihood, so comparing element-wise
-    without matching compares arbitrary pairings.
+    without matching compares arbitrary pairings. The direction matters: the result
+    indexes the FITTED arrays, so ``fitted[_match(fitted, truth)]`` lines up with
+    ``truth`` row for row.
     """
-    normed = lambda a: a / jnp.linalg.norm(a, axis=-1, keepdims=True)  # noqa: E731
-    similarity = normed(fitted) @ normed(truth).T
+    similarity = _normed(truth) @ _normed(fitted).T
     taken: list[int] = []
     for row in similarity:
-        order = jnp.argsort(-row)
-        taken.append(int(next(int(i) for i in order if int(i) not in taken)))
+        order = [int(i) for i in jnp.argsort(-row)]
+        taken.append(next(i for i in order if i not in taken))
     return jnp.asarray(taken)
 
 
@@ -754,7 +766,8 @@ def test_recovers_easy_synthetic_data(key: Array) -> None:
     spectra = samples["spectra"].mean(axis=0)
     permutation = _match(spectra, true_spectra / true_spectra.mean(axis=-1, keepdims=True))
 
-    # Shapes, not values: the scale lives in the concentrations after normalisation.
+    # Compare shapes, not magnitudes: after mean-one normalisation the scale has moved
+    # into the concentrations.
     scaled_truth = true_spectra / true_spectra.mean(axis=-1, keepdims=True)
     for fitted, true in zip(spectra[permutation], scaled_truth, strict=True):
         correlation = jnp.corrcoef(fitted, true)[0, 1]
@@ -767,12 +780,17 @@ def test_recovers_easy_synthetic_data(key: Array) -> None:
     assert float(inside.mean()) > 0.9, "truth outside the 95% interval too often"
 
 
-def test_reports_convergence(key: Array) -> None:
-    """R-hat and ESS are reported on every fit, per spec.md section 8."""
+def test_chains_converged(key: Array) -> None:
+    """R-hat is checked, not merely printed -- spec.md section 8 and principle 6.
+
+    A fit that has not converged cannot support any statement about posterior width,
+    which is the whole deliverable.
+    """
     dataset, _, _ = make_easy_dataset(key)
     mcmc = fit(dataset, n_species=3, key=jax.random.key(0))
-    summary = mcmc.get_samples(group_by_chain=True)
-    assert "sigma" in summary
+    stats = summary(mcmc.get_samples(group_by_chain=True), prob=0.95)
+    worst = max(float(jnp.nanmax(site["r_hat"])) for site in stats.values())
+    assert worst < 1.05, f"worst R-hat {worst:.3f}; chains have not mixed"
 ```
 
 - [ ] **Step 6: Write the inference driver**

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-20
 brain_page: ~/brain/wiki/methods/multivariate-curve-resolution.md
 implements: [src/spectrahandler/curve_resolution/dataset.py]
@@ -73,5 +73,6 @@ internal arrays are never reordered.
 
 ## Status note
 
-**Proposed, not accepted.** The spec lists confirming this as a blocking open question.
-Accept it, or change it, before writing `dataset.py`.
+**Accepted 2026-09-20.** Task 0 of the plan is unblocked. Reversing this after
+`dataset.py` exists is a wide refactor; supersede with a new ADR rather than editing
+this one.
