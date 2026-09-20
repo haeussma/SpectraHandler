@@ -9,9 +9,10 @@ UV/Vis reaction time course, with posteriors, and prove it by round-tripping syn
 data where the truth is known.
 
 **Architecture:** A frozen `SpectralDataset` carrying dense `(run, time, wavelength)`
-arrays is the only input to inference. A NumPyro model puts a smoothness prior on
-spline coefficients for each spectrum, softplus-transforms for non-negativity, and
-normalises each spectrum to fix the scale ambiguity. NUTS samples it.
+arrays is the only input to inference. A NumPyro model puts a second-order random walk
+directly over the wavelength channels of each spectrum, softplus-transforms for
+non-negativity, and normalises each spectrum to fix the scale ambiguity. NUTS samples
+it. No basis expansion — see `spec.md` §4.
 
 **Tech Stack:** JAX, NumPyro, NumPy (boundaries and tests only), pytest.
 
@@ -23,10 +24,10 @@ Copied from [`CLAUDE.md`](../../CLAUDE.md) and [`spec.md`](spec.md) §0. Every t
 requirements implicitly include these.
 
 - Python ≥ 3.13. `uv run ...` for everything; never bare `python`, never `pip`.
-- **Do not import SciPy.** It is present transitively via JAX. Build the spline basis
-  by hand (Task 2 gives the code).
-- NumPy is allowed only at boundaries — building a fixed design matrix once, and in
-  tests. All model maths is `jax.numpy`.
+- **Do not import SciPy.** It is present transitively via JAX.
+- NumPy is allowed only at boundaries and in tests. All model maths is `jax.numpy`.
+- Work on a **binned** wavelength grid (~64 channels). The random walk runs per channel,
+  so the raw 1 nm grid would be needlessly expensive.
 - float64: already enabled in `tests/conftest.py`. Never force it at library import.
 - Full annotations on every parameter and return, including `-> None`.
 - Google-style docstring on every public module, class and function.
@@ -45,8 +46,10 @@ task below assumes. Accept it or change it before starting Task 0.
 
 ## Scope
 
-Steps 0–3 of [`spec.md`](spec.md) §7. Step 3 is the gate: the synthetic round-trip.
-Nothing past it is planned, because what step 4 should be depends on how step 3 behaves.
+Steps 0–3 of [`spec.md`](spec.md) §7, as two tasks — the spec's step 2 (prior
+predictive) folds into the model task, since without a basis there is nothing to build
+before the model itself. Step 3 is the gate: the synthetic round-trip. Nothing past it
+is planned, because what step 4 should be depends on how step 3 behaves.
 
 ---
 
@@ -535,151 +538,7 @@ git commit -m "feat: synthetic datasets with known spectra and profiles"
 
 ---
 
-### Task 2: Spline basis and prior predictive sanity
-
-**Files:**
-- Create: `src/spectrahandler/curve_resolution/basis.py`
-- Modify: `src/spectrahandler/curve_resolution/__init__.py`
-- Test: `tests/test_basis.py`
-
-**Interfaces:**
-- Consumes: nothing from earlier tasks.
-- Produces: `bspline_basis(wavelength: Array, n_basis: int, degree: int = 3) -> Array`
-  returning shape `(n_wavelength, n_basis)`.
-
-SciPy is banned, so Cox–de Boor is written out. It runs **once**, on a fixed grid, at
-setup — not inside the gradient — so NumPy is the right tool and the cost is irrelevant.
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/test_basis.py
-"""Properties a B-spline design matrix must have."""
-
-import jax.numpy as jnp
-import pytest
-
-from spectrahandler.curve_resolution import bspline_basis
-
-
-@pytest.fixture
-def grid() -> jnp.ndarray:
-    return jnp.linspace(340.0, 700.0, 64)
-
-
-def test_shape(grid: jnp.ndarray) -> None:
-    assert bspline_basis(grid, n_basis=10).shape == (64, 10)
-
-
-def test_partition_of_unity(grid: jnp.ndarray) -> None:
-    """Rows sum to 1 -- the defining property, and the best single bug catcher."""
-    assert jnp.allclose(bspline_basis(grid, n_basis=10).sum(axis=1), 1.0, atol=1e-10)
-
-
-def test_non_negative(grid: jnp.ndarray) -> None:
-    assert bool((bspline_basis(grid, n_basis=10) >= 0).all())
-
-
-def test_is_local(grid: jnp.ndarray) -> None:
-    """A cubic basis function touches at most degree+1 neighbours; locality is why
-    a random walk on the coefficients means smoothness in wavelength."""
-    basis = bspline_basis(grid, n_basis=12, degree=3)
-    assert int((basis > 1e-12).sum(axis=1).max()) <= 4
-
-
-def test_rejects_too_few_basis_functions(grid: jnp.ndarray) -> None:
-    with pytest.raises(ValueError, match="n_basis"):
-        bspline_basis(grid, n_basis=3, degree=3)
-```
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `uv run pytest tests/test_basis.py -q`
-Expected: FAIL — `cannot import name 'bspline_basis'`.
-
-- [ ] **Step 3: Write the implementation**
-
-```python
-# src/spectrahandler/curve_resolution/basis.py
-"""B-spline design matrix over the wavelength grid.
-
-Built once at setup on a fixed grid, never inside a gradient, so NumPy is used here and
-the recursion's cost does not matter. Written out rather than imported because SciPy is
-banned in this project (``CLAUDE.md``).
-"""
-
-import jax.numpy as jnp
-import numpy as np
-from jax import Array
-
-__all__ = ["bspline_basis"]
-
-
-def bspline_basis(wavelength: Array, n_basis: int, degree: int = 3) -> Array:
-    """Open-uniform B-spline basis evaluated on ``wavelength``.
-
-    Rows sum to one and every entry is non-negative, so a coefficient vector maps to a
-    smooth non-negative-weighted combination. Each basis function is local: a second
-    order random walk on the coefficients therefore means smoothness in wavelength.
-
-    Args:
-        wavelength: Strictly increasing grid, shape ``(n_wavelength,)``, in nm.
-        n_basis: Number of basis functions. Must exceed ``degree``.
-        degree: Spline degree; 3 is cubic.
-
-    Returns:
-        Design matrix of shape ``(n_wavelength, n_basis)``.
-
-    Raises:
-        ValueError: If ``n_basis <= degree``.
-    """
-    if n_basis <= degree:
-        raise ValueError(f"n_basis must exceed degree, got n_basis={n_basis}, {degree=}")
-
-    x = np.asarray(wavelength, dtype=float)
-    lo, hi = x[0], x[-1]
-    interior = np.linspace(lo, hi, n_basis - degree + 1)
-    knots = np.concatenate([np.repeat(lo, degree), interior, np.repeat(hi, degree)])
-
-    # Cox-de Boor, degree 0 upward. Points at the right edge belong to the last span.
-    basis = np.zeros((x.size, knots.size - 1))
-    for i in range(knots.size - 1):
-        basis[:, i] = ((x >= knots[i]) & (x < knots[i + 1])).astype(float)
-    basis[x >= hi, np.searchsorted(knots, hi) - 1] = 1.0
-
-    for order in range(1, degree + 1):
-        updated = np.zeros((x.size, basis.shape[1] - 1))
-        for i in range(updated.shape[1]):
-            left_span = knots[i + order] - knots[i]
-            right_span = knots[i + order + 1] - knots[i + 1]
-            left = (x - knots[i]) / left_span * basis[:, i] if left_span > 0 else 0.0
-            right = (
-                (knots[i + order + 1] - x) / right_span * basis[:, i + 1] if right_span > 0 else 0.0
-            )
-            updated[:, i] = left + right
-        basis = updated
-
-    return jnp.asarray(basis[:, :n_basis])
-```
-
-Add `bspline_basis` to the `__init__.py` imports and `__all__`.
-
-- [ ] **Step 4: Run to verify it passes**
-
-Run: `uv run pytest tests/test_basis.py -q`
-Expected: PASS, 5 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-uv run ruff format . && uv run ruff check . && uv run ty check && uv run pytest
-git add src/spectrahandler/curve_resolution tests/test_basis.py
-git commit -m "feat: SciPy-free B-spline basis over the wavelength grid"
-```
-
----
-
-### Task 3: The v0 model, NUTS, and the synthetic round-trip
+### Task 2: The v0 model, NUTS, and the synthetic round-trip
 
 This is the gate. Nothing in [`spec.md`](spec.md) §7 past step 3 gets written until the
 recovery test passes.
@@ -691,15 +550,14 @@ recovery test passes.
 - Test: `tests/test_model.py`, `tests/test_recovery.py`
 
 **Interfaces:**
-- Consumes: `SpectralDataset` (Task 0), `make_easy_dataset` (Task 1), `bspline_basis`
-  (Task 2).
+- Consumes: `SpectralDataset` (Task 0), `make_easy_dataset` (Task 1).
 - Produces:
-  - `curve_resolution_model(absorbance: Array, mask: Array, basis: Array, n_species: int,
-    *, tau: float, sigma_scale: float) -> None` — a NumPyro model. Sites: `theta_init`,
-    `curvature`, `c_raw`, `sigma`; deterministics `spectra` `(n_species, n_wavelength)`
-    and `concentrations` `(n_run, n_time, n_species)`.
-  - `fit(dataset: SpectralDataset, n_species: int, key: Array, *, n_basis: int = 10,
-    tau: float = 0.5, num_warmup: int = 200, num_samples: int = 200) -> MCMC`.
+  - `curve_resolution_model(absorbance: Array | None, mask: Array, n_wavelength: int,
+    n_species: int, *, tau: float, sigma_scale: float) -> None` — a NumPyro model.
+    Sites: `theta_init`, `curvature`, `c_raw`, `sigma`; deterministics `spectra`
+    `(n_species, n_wavelength)` and `concentrations` `(n_run, n_time, n_species)`.
+  - `fit(dataset: SpectralDataset, n_species: int, key: Array, *, tau: float = 0.01,
+    num_warmup: int = 200, num_samples: int = 200, num_chains: int = 2) -> MCMC`.
 
 **One deviation from the spec, decided here.** §4 says each spectrum is normalised to
 unit sum. Taken literally, with ~500 channels each `S` entry is ~0.002 and `C` must be
@@ -720,25 +578,20 @@ import pytest
 from jax import Array
 from numpyro.infer import Predictive
 
-from spectrahandler.curve_resolution import (
-    bspline_basis,
-    curve_resolution_model,
-    make_easy_dataset,
-)
+from spectrahandler.curve_resolution import curve_resolution_model, make_easy_dataset
 
 
 @pytest.fixture
 def prior_draws(key: Array) -> dict[str, Array]:
     dataset, _, _ = make_easy_dataset(key)
-    basis = bspline_basis(dataset.wavelength, n_basis=10)
     predictive = Predictive(curve_resolution_model, num_samples=64)
     return predictive(
         jax.random.key(1),
         absorbance=None,
         mask=dataset.mask,
-        basis=basis,
+        n_wavelength=dataset.n_wavelength,
         n_species=3,
-        tau=0.5,
+        tau=0.01,
         sigma_scale=0.01,
     )
 
@@ -758,10 +611,10 @@ def test_spectra_are_scale_fixed(prior_draws: dict[str, Array]) -> None:
 
 
 def test_spectra_are_smooth(prior_draws: dict[str, Array]) -> None:
-    """Prior draws should look like UV/Vis bands, not noise: curvature much smaller
-    than the signal itself."""
+    """Prior draws should look like UV/Vis bands, not noise. With the walk running per
+    channel this is the test that pins tau -- see step 4."""
     curvature = jnp.diff(prior_draws["spectra"], n=2, axis=-1)
-    assert float(jnp.abs(curvature).mean()) < 0.1
+    assert float(jnp.abs(curvature).mean()) < 0.05
 
 
 def test_concentrations_are_non_negative(prior_draws: dict[str, Array]) -> None:
@@ -797,7 +650,7 @@ __all__ = ["curve_resolution_model"]
 def curve_resolution_model(
     absorbance: Array | None,
     mask: Array,
-    basis: Array,
+    n_wavelength: int,
     n_species: int,
     *,
     tau: float,
@@ -805,29 +658,31 @@ def curve_resolution_model(
 ) -> None:
     """NumPyro model for absorbance as concentrations times pure spectra.
 
-    Each spectrum is a softplus-transformed spline whose coefficients follow a second
-    order random walk, then rescaled to mean one. Non-negativity keeps the fit
-    physical; the rescaling removes the ``C * a, S / a`` ambiguity that would otherwise
-    leave the posterior with a free direction.
+    Each spectrum is a softplus-transformed second order random walk over the
+    wavelength channels, rescaled to mean one. Non-negativity keeps the fit physical;
+    the rescaling removes the ``C * a, S / a`` ambiguity that would otherwise leave the
+    posterior with a free direction. There is no basis expansion -- the walk runs per
+    channel, which is why the grid must be binned. See ``spec.md`` section 4.
 
     Args:
         absorbance: Observations, shape ``(n_run, n_time, n_wavelength)``, or ``None``
             to draw from the prior.
         mask: True where measured, shape ``(n_run, n_time)``.
-        basis: Spline design matrix, shape ``(n_wavelength, n_basis)``.
+        n_wavelength: Number of wavelength channels, after binning.
         n_species: Number of components to resolve.
-        tau: Fixed scale of the random walk curvature. Larger allows sharper bands.
+        tau: Fixed scale of the random walk curvature, **per channel**. It therefore
+            scales with the square of the bin width: rebinning changes it.
         sigma_scale: Scale of the ``HalfNormal`` prior on the noise standard deviation.
     """
     n_run, n_time = mask.shape
-    n_basis = basis.shape[1]
 
-    # Second order random walk, non-centred: two free coefficients plus curvature.
+    # Second order random walk, non-centred: two free values plus per-channel curvature.
     theta_init = numpyro.sample(
         "theta_init", dist.Normal(0.0, 1.0).expand([n_species, 2]).to_event(2)
     )
     curvature = numpyro.sample(
-        "curvature", dist.Normal(0.0, tau).expand([n_species, n_basis - 2]).to_event(2)
+        "curvature",
+        dist.Normal(0.0, tau).expand([n_species, n_wavelength - 2]).to_event(2),
     )
     slope = jnp.cumsum(
         jnp.concatenate([theta_init[:, 1:2] - theta_init[:, 0:1], curvature], axis=1),
@@ -837,7 +692,7 @@ def curve_resolution_model(
         [theta_init[:, 0:1], theta_init[:, 0:1] + jnp.cumsum(slope, axis=1)], axis=1
     )
 
-    unnormalised = softplus(theta @ basis.T)
+    unnormalised = softplus(theta)
     spectra = numpyro.deterministic(
         "spectra", unnormalised / unnormalised.mean(axis=-1, keepdims=True)
     )
@@ -935,7 +790,6 @@ import numpyro
 from jax import Array
 from numpyro.infer import MCMC, NUTS
 
-from spectrahandler.curve_resolution.basis import bspline_basis
 from spectrahandler.curve_resolution.dataset import SpectralDataset
 from spectrahandler.curve_resolution.model import curve_resolution_model
 
@@ -947,8 +801,7 @@ def fit(
     n_species: int,
     key: Array,
     *,
-    n_basis: int = 10,
-    tau: float = 0.5,
+    tau: float = 0.01,
     num_warmup: int = 200,
     num_samples: int = 200,
     num_chains: int = 2,
@@ -959,8 +812,7 @@ def fit(
         dataset: Validated observations. ``v0`` requires ``mask.all()``.
         n_species: Number of components to resolve. Given, not inferred.
         key: PRNG key for the sampler.
-        n_basis: Spline coefficients per spectrum.
-        tau: Fixed random walk curvature scale.
+        tau: Fixed random walk curvature scale, per wavelength channel.
         num_warmup: Warmup iterations. 200 is the development setting.
         num_samples: Post-warmup draws per chain.
         num_chains: Chains; two is the minimum that lets R-hat mean anything.
@@ -976,7 +828,6 @@ def fit(
         raise NotImplementedError("v0 requires fully measured runs; masking is step 4+")
 
     scale = float(jnp.nanmax(jnp.abs(dataset.absorbance)))
-    basis = bspline_basis(dataset.wavelength, n_basis=n_basis)
     kernel = NUTS(curve_resolution_model)
     mcmc = MCMC(
         kernel,
@@ -989,7 +840,7 @@ def fit(
         key,
         absorbance=dataset.absorbance / scale,
         mask=dataset.mask,
-        basis=basis,
+        n_wavelength=dataset.n_wavelength,
         n_species=n_species,
         tau=tau,
         sigma_scale=0.01,
@@ -1026,12 +877,15 @@ is chosen from that evidence, not from this plan.
 
 ## Self-review notes
 
-- **Spec coverage:** §3 → Task 0. §1 "easy synthetic" and §7 step 1 → Task 1. §4 spline
-  basis and §7 step 2 → Task 2. §4 model and §7 step 3 → Task 3. §6 test priorities 1–3
-  → Tasks 0, 2, 3. §6 priority 4, masking equivalence, is **not** covered — masking is
-  off in v0 and that test lands with step 4+, as §1 says.
+- **Spec coverage:** §3 → Task 0. §1 "easy synthetic" and §7 step 1 → Task 1. §4 model,
+  §7 steps 2 and 3 → Task 2. §6 test priorities 1–3 → Tasks 0 and 2. §6 priority 4,
+  masking equivalence, is **not** covered — masking is off in v0 and that test lands
+  with step 4+, as §1 says.
 - **Not covered by design:** steps 4–8, reference spectra, baselines, per-wavelength
   noise, multi-run pooling, rank diagnostics, real fixtures.
-- **Open in the spec, not resolved here:** `n_basis` and `tau` are given defaults of 10
-  and 0.5 to make the plan runnable; §9 says to pick them from prior predictive draws,
-  which is Task 2 step 4.
+- **Open in the spec, not resolved here:** `tau` is given a default of 0.01 to make the
+  plan runnable; §9 says to pick it from prior predictive draws, which is Task 2 step 4.
+- **Deliberately not built:** no `basis.py`. An earlier draft had a B-spline basis as
+  Task 2; it was removed because it buys sampling speed, not correctness, and binning
+  (already required by §8) makes the direct random walk affordable. Reintroduce it only
+  if profiling says the per-channel walk is the bottleneck.

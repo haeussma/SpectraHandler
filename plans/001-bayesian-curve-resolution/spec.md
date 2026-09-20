@@ -49,13 +49,14 @@ the left column runs.
 | Baseline | **none** | smooth per-run baseline |
 | Reference spectra | **none** — carried in the dataset, not used by the model | soft likelihood terms with per-species σ_ref |
 | Concentration profiles | **independent per timepoint**, non-negative, no smoothness | smoothness prior; then extents; then ODE |
-| Spectral smoothness | 2nd-order RW on spline coefficients, **τ fixed, not sampled** | τ sampled hierarchically; possibly GP over λ |
+| Spectral smoothness | 2nd-order RW **directly on the binned wavelength grid**, τ fixed | spline basis if sampling is too slow; τ sampled hierarchically; possibly GP over λ |
 | Runs | array carries the run axis; **fit with n_run = 1** | shared S across runs, pooled fit |
 | Wavelength grids | **must already match** — raise otherwise | resample at construction |
 | Masking | implemented, but **v0 requires all-True** | ragged runs, padded |
 | Rank diagnostic | none | effective-rank report per run and pooled |
 | Species count | **given by the caller** | shrinkage prior, posterior over count |
 | Test data | **easy synthetic**: well-separated spectra, low noise | overlapping spectra, realistic noise, real fixtures |
+| Wavelength resolution | **binned to ~64 channels** | full 1 nm grid, once it is affordable |
 
 Deliberately kept even in v0, because without them the fit is not identified at all:
 non-negativity, and unit-sum normalisation of each spectrum.
@@ -183,15 +184,16 @@ Fail loudly at build time, never mid-sampling:
 ## 4. Model, v0
 
 ```
-θ_k  ~ 2nd-order random walk on spline coefficients, τ FIXED
-S_k  = softplus(B θ_k) / Σ           # unit-sum normalisation fixes scale
+θ_k  ~ 2nd-order random walk over the wavelength grid, τ FIXED
+S_k  = softplus(θ_k) / Σ             # unit-sum normalisation fixes scale
 C    ~ softplus(Normal), independent per (run, time, species), non-negative
 σ    ~ HalfNormal(σ_scale)           # ONE scalar for the whole dataset
 A    ~ Normal(C @ S.T, σ)
 ```
 
 That is the entire v0 model. No baseline, no references, no per-wavelength noise, no
-smoothness on `C`, no sampled `τ`.
+smoothness on `C`, no sampled `τ`, **and no basis expansion** — the random walk runs
+directly over wavelength channels.
 
 **Why these three survive the cull:**
 
@@ -199,7 +201,21 @@ smoothness on `C`, no sampled `τ`.
 | --- | --- |
 | Non-negativity (softplus) | Negative concentrations and absorptivities make the fit meaningless and the posterior multimodal |
 | Unit-sum normalisation of each spectrum | Without it `C·a, S/a` is exactly unidentified and the sampler wanders the scale direction forever |
-| Spline basis for `S` | This *reduces* complexity — ~10 coefficients per species instead of ~500 free wavelengths |
+| Smoothness on `S` (2nd-order RW) | Without it each channel is free and the decomposition is far less identified; spectra come out spiky and the sampler wanders |
+
+**Why there is no spline basis.** An earlier draft expanded each spectrum in ~10 spline
+coefficients, justified as *reducing* complexity against ~500 free wavelengths. That
+argument only holds at 500 channels. §8 already says to bin to 4–5 nm for development,
+which leaves ~64 — and 64 free channels per species with a random walk on them is both
+fewer moving parts and less code than a basis plus its knot placement and `n_basis`
+choice. A B-spline basis is a real optimisation, but it is an optimisation: it buys
+sampling speed, not correctness, and it is the first thing to reach for if NUTS is too
+slow. Binning is what makes the simple version affordable, so binning is in v0 and the
+basis is not.
+
+A straight line in wavelength is *not* an option for `S` — a line cannot represent an
+absorption band, so the model could not express the thing it is fitting. Linear models
+belong to the baseline, which v0 does not have at all.
 
 **Why one shared σ is defensible as a starting point:** it is wrong in a known direction.
 Real DAD noise varies with wavelength and grows with absorbance, so a single σ over-weights
@@ -224,14 +240,14 @@ src/spectrahandler/
   curve_resolution/
     __init__.py
     dataset.py        # SpectralDataset, validation, canonical sort
-    basis.py          # spline basis construction
     model.py          # NumPyro model
     inference.py      # NUTS driver
     synthetic.py      # generate synthetic datasets for tests and demos
 ```
 
-`priors.py` and `diagnostics.py` arrive when there is more than one prior choice and more
-than R̂/ESS to report.
+`basis.py` arrives only if profiling says the random walk over channels is the
+bottleneck. `priors.py` and `diagnostics.py` arrive when there is more than one prior
+choice and more than R̂/ESS to report.
 
 `synthetic.py` lives in the package, not in tests — the suite must run before any real
 fixture is reachable, and synthetic data is also how the later coverage check is run. Note
@@ -252,7 +268,6 @@ tests/
     1a/                       # exists: real single spectra, negative fixture
     synthetic/                # new: generated, regenerable, git-ignored
   test_dataset.py             # shape/validation invariants, canonical sort
-  test_basis.py
   test_model.py               # shapes, prior predictive sanity
   test_recovery.py            # synthetic round-trip
 ```
@@ -284,7 +299,7 @@ stay in `tests/data/` with the provenance README already there.
 | --- | --- | --- |
 | 0 | `SpectralDataset` + validation + tests | All §3 invariants enforced and tested |
 | 1 | `synthetic.py`, easy regime | Produces a dataset with known `S`, `C`, uniform noise |
-| 2 | Basis + prior predictive | Prior draws look like plausible UV/Vis spectra |
+| 2 | Prior predictive | Prior draws look like plausible UV/Vis spectra; `τ` picked from them |
 | 3 | **v0 model + NUTS, n_run = 1** | **Synthetic round-trip recovers `S` and `C` within CI. This is the milestone.** |
 | 4 | Smoothness on `C`, sampled `τ` | Posterior narrows or stays equal; no divergences |
 | 5 | Reference spectra terms | Ablation: posterior width with vs. without |
@@ -328,8 +343,11 @@ Still open:
   absorb it, or write a reader here?
   → [ADR 0002](../../docs/decisions/0002-scope-boundary-against-mcrals.md), unresolved.
   Does not block steps 0–3.
-- Number of spline coefficients per spectrum, and the fixed `τ` for v0. Pick from prior
-  predictive draws rather than by argument — this is what Task 2 is for.
+- The fixed `τ` for v0. Pick from prior predictive draws rather than by argument — this
+  is what Task 2 is for. Note that `τ` is curvature *per channel*, so it scales roughly
+  with the square of the bin width: rebinning changes it.
+- At what channel count does the random walk over wavelengths become the bottleneck, and
+  is a spline basis then worth reintroducing? Profile before assuming.
 - Does `C` need a smoothness prior at all once kinetics arrive, or does the ODE replace it
   entirely? Probably the latter — so step 4 may be throwaway.
 - Whether v0's single σ should be sampled or fixed to a measured blank estimate. Fixed is
