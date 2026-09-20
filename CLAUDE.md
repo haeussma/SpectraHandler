@@ -88,6 +88,31 @@ npm run build             # what CI runs
 - Docstrings stay the source of truth for API detail; docs pages explain *when and why*.
 - Deployed to GitHub Pages by `.github/workflows/docs.yml` on push to `main`.
 
+## Where things get written
+
+`docs/` is a **published website**. Everything under `docs/src/content/docs/` goes public
+on GitHub Pages. Internal working material never goes there.
+
+| Document | Goes in | Public | Lifetime |
+|---|---|---|---|
+| Implementation plan — sequenced work | `plans/NNN-slug.md` | no | delete when done |
+| ADR — a decision with lasting consequence | `docs/decisions/NNNN-slug.md` | no | forever |
+| The science: methods, concepts, papers | `~/brain/wiki/methods/<slug>.md` | no | forever |
+| Which methods this repo relies on | `~/brain/projects/spectrahandler.md` | no | forever |
+| User-facing explanation and API docs | `docs/src/content/docs/` | **yes** | forever |
+| Test fixture provenance and traps | `tests/data/README.md` | no | with the data |
+
+The split that matters: **a plan is what we are going to do; an ADR is why we chose it.**
+When a plan contains a choice that would be expensive to reverse, lift it into an ADR and
+link to it. Plans get deleted. ADRs do not.
+
+`docs/decisions/` sits outside `docs/src/content/docs/`, so Astro does not build it — it
+is versioned with the code and invisible to the site. `/spec-link` writes these and wires
+the matching brain page in the other direction.
+
+**Do not start building a feature without a plan.** If one does not exist for the work at
+hand, write it first — `/brainstorm` if the shape is still open, `/write-plan` if it is not.
+
 ## Tests
 
 - pytest, tests in `tests/`, mirroring `src/spectrahandler/`.
@@ -118,5 +143,7 @@ at commit time — they catch a broken edit within seconds instead of twenty min
 
 ## Vault link
 
-Methods implemented here that also live in `~/brain/wiki` stay linked both ways — see the
-`/spec-link` command.
+When a method implemented here also has a page in `~/brain/wiki/methods/`, run
+`/spec-link` — it fills the page's `implements:` frontmatter, writes the matching ADR
+under `docs/decisions/`, and logs the operation. Science and code stay linked in both
+directions or the link rots.
