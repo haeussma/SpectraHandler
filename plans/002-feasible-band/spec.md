@@ -14,7 +14,8 @@ reaches them with constraints on the split instead of priors.
 
 The executable task breakdown is [`plan.md`](plan.md). Evidence behind the choice:
 [`report-spectrum-descriptions.md`](../001-bayesian-curve-resolution/report-spectrum-descriptions.md)
-and the scripts in [`bench/`](../001-bayesian-curve-resolution/bench).
+and its [`bench/results/`](../001-bayesian-curve-resolution/bench/results). The bench
+scripts were never committed (`bench/.gitignore`).
 
 ---
 
@@ -182,7 +183,8 @@ all of it is input to the real-data plan.
 
 Three things the prototype found that the bench had not:
 
-1. **A stuck-chain bug, inherited from `remix.py`.** `Θ` is not convex. A uniform step
+1. **A stuck-chain bug, inherited from the bench's `remix.py` (never committed).** `Θ` is
+   not convex. A uniform step
    could land in a gap; from an infeasible point every bracket is empty, so the chain
    never moved again — 89% infeasible draws for one chain key, flat coverage 0.25. The
    band survived only because its extremes were collected before the chain stuck.

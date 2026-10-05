@@ -57,11 +57,12 @@ tests reads a real fixture. Task 6 requires Task 3's gate to pass.
 ### Task 0: Commit the decision record
 
 The ADR cites the bench report by path, and plan 001's directory is deleted at the end
-of this plan. Commit the evidence first, so it stays reachable in git history.
+of this plan. Commit the report and bench results first, so they stay reachable in git
+history. The bench scripts are not committed (`bench/.gitignore`).
 
 **Files:**
 - Add: `plans/001-bayesian-curve-resolution/report-spectrum-descriptions.md`
-- Add: `plans/001-bayesian-curve-resolution/bench/` (`__pycache__` is gitignored)
+- Add: `plans/001-bayesian-curve-resolution/bench/` (`*.py` and `__pycache__` are gitignored)
 - Add: `docs/decisions/0003-feasible-band-not-posterior.md`, `plans/002-feasible-band/`
 - Modify (already edited): `docs/decisions/0002-scope-boundary-against-mcrals.md`,
   `plans/001-bayesian-curve-resolution/spec.md`
@@ -779,9 +780,9 @@ git commit -m "feat: resolve_band reports the feasible band of every spectra/pro
 - Consumes: `resolve_band`, `FeasibleBand` (Task 2); `make_realistic_dataset`.
 - Produces: nothing new. Task 5 may start only once this passes.
 
-These tests mirror the bench (`plans/001-bayesian-curve-resolution/bench/remix.py`) on
-the library code. If one fails, do **not** tune thresholds or defaults to make it pass.
-Report the measured number against the docstring's.
+These tests mirror the bench (report §B.1 / `bench/results`) on the library code. If one
+fails, do **not** tune thresholds or defaults to make it pass. Report the measured number
+against the docstring's.
 
 - [ ] **Step 1: Write the tests**
 
@@ -789,7 +790,7 @@ Report the measured number against the docstring's.
 # tests/test_band_coverage.py
 """The gate: does the band contain the truth?
 
-Mirrors the bench in ``plans/001-bayesian-curve-resolution/bench`` (``remix.py``):
+Mirrors the bench of plan 001 (report section B.1, ``bench/results``):
 realistic a -> b -> c data with the first scan dropped, one reference scan of ``a`` at
 50 uM, sigma 0.002. "harder" lifts every spectrum by 0.003 AU/uM so no true value is
 exactly zero, which makes it the clean test of the split. Numbers measured on the JAX
@@ -2052,7 +2053,8 @@ git commit -m "docs: guide to curve resolution with the feasible band"
 
 - [ ] **Step 1: Delete the superseded plan**
 
-Its report and bench are in git history from Task 0's commit; ADR 0003 cites them by path.
+Its report and bench results are in git history from Task 0's commit; ADR 0003 cites them
+by path. The bench scripts were never committed.
 
 ```bash
 git rm -r plans/001-bayesian-curve-resolution

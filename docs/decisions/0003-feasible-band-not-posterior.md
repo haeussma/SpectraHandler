@@ -102,7 +102,9 @@ and 4.5 µM (harder) on a 12.5 µM total, about 1.5 s per fit.
   steps the band reproduced the bench's widths. MCR-BANDS computes the extremes by
   constrained optimisation, and polygon inflation (Sawall et al. 2013) computes `Θ`
   exactly. One of those becomes necessary as the number of free coordinates grows.
-- **Two fixes over the bench's `remix.py`.** (a) `Θ` is not convex, so a uniform step can
+- **Two fixes over the bench prototype.** The bench's `remix.py` was never committed; the
+  corrected algorithm lives in `src/spectrahandler/curve_resolution/band.py` (plan 002).
+  (a) `Θ` is not convex, so a uniform step can
   land in a gap; from there every bracket is empty and the chain never moves again. One
   chain key had 89% infeasible draws and flat coverage 0.25. Slice-sampling shrinkage
   (Neal 2003, doi:10.1214/aos/1056562461) redraws instead. (b) The bench started from

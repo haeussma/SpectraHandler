@@ -6,7 +6,8 @@
 > are replaced by [ADR 0003](../../docs/decisions/0003-feasible-band-not-posterior.md) and
 > [`plans/002-feasible-band/spec.md`](../002-feasible-band/spec.md). §3 (data layout) and
 > the §7 gate record stand. This directory is deleted at the end of plan 002; its report
-> and bench stay reachable in git history from plan 002 Task 0's commit.
+> and bench results stay reachable in git history from plan 002 Task 0's commit. The bench
+> scripts were never committed (`bench/.gitignore`).
 
 Scope: the **inference module only**, and within it only the stage with **no kinetic
 model** — spectra and concentration profiles, nothing about rate constants, stoichiometry
