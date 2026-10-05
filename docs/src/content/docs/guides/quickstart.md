@@ -5,12 +5,10 @@ sidebar:
   order: 2
 ---
 
-:::caution[Under construction]
-The API is still taking shape. This page will hold the end-to-end example once the first
-deconvolution model lands.
-:::
+The curve-resolution workflow, with a runnable example, is in
+[Curve resolution with honest uncertainty](../curve-resolution/).
 
-The intended shape of a fit:
+Every example needs float64, set once before anything else touches JAX:
 
 ```python
 import jax
