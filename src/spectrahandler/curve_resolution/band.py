@@ -8,8 +8,9 @@ spectrum value -- the band -- plus a noise margin, and flat draws over the regio
 labelled typical-solution summary. See ``docs/decisions/0003-feasible-band-not-posterior.md``.
 """
 
+import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import jax
 import jax.numpy as jnp
@@ -93,7 +94,10 @@ def resolve_band(
 
     Closure: in every run, species sum to ``initial_state[run].sum()`` at every time.
     Every species with a finite ``reference_spectra`` row is pinned by it; species
-    without one are resolved only up to relabelling among themselves.
+    without one are resolved only up to relabelling among themselves. The work is done
+    with concentrations divided by the mean run total and absorbance by its RMS, so every
+    tolerance acts on a problem of unit scale and the result does not depend on the units;
+    every output is in the dataset's units.
 
     Args:
         dataset: Validated observations; ``mask`` must be all True.
@@ -114,15 +118,17 @@ def resolve_band(
 
     Raises:
         NotImplementedError: If ``dataset.mask`` has any False entry.
-        ValueError: If no feasible split is found: the rank, closure or references
+        ValueError: If the mean run total or the absorbance RMS is not finite and
+            positive, or if no feasible split is found: the rank, closure or references
             contradict the data.
     """
     if not bool(dataset.mask.all()):
         raise NotImplementedError("resolve_band requires fully measured runs")
+    dataset, c_scale, a_scale = _to_unit_scale(dataset)
     k = dataset.n_species
     n_row = dataset.n_run * dataset.n_time
     time_course = dataset.absorbance.reshape(n_row, dataset.n_wavelength)
-    sigma = _estimate_sigma(time_course, k) if sigma is None else sigma
+    sigma = _estimate_sigma(time_course, k) if sigma is None else sigma / a_scale
 
     # Each reference becomes one more data row, weighted so its noise is sigma too, with
     # composition `weight` of its own species and zero of every other.
@@ -204,18 +210,49 @@ def resolve_band(
     kc, ks = jax.random.split(k_noise)
     c_draws = c + sd_c[:, None, :] * jax.random.normal(kc, c.shape)
     s_draws = sp + sd_s[:, :, None] * jax.random.normal(ks, sp.shape)
+    s_scale = a_scale / c_scale
     return FeasibleBand(
-        concentration_lower=jnp.clip(c_min - margin_c, 0.0).reshape(shape),
-        concentration_upper=(c_max + margin_c).reshape(shape),
-        spectra_lower=jnp.clip(s_min - margin_s[:, None], 0.0),
-        spectra_upper=s_max + margin_s[:, None],
-        concentration_ambiguity=jnp.stack([c_min, c_max]).reshape(2, *shape),
-        spectra_ambiguity=jnp.stack([s_min, s_max]),
-        concentration_draws=c_draws.reshape(-1, *shape),
-        spectra_draws=s_draws,
-        sigma=sigma,
+        concentration_lower=c_scale * jnp.clip(c_min - margin_c, 0.0).reshape(shape),
+        concentration_upper=c_scale * (c_max + margin_c).reshape(shape),
+        spectra_lower=s_scale * jnp.clip(s_min - margin_s[:, None], 0.0),
+        spectra_upper=s_scale * (s_max + margin_s[:, None]),
+        concentration_ambiguity=c_scale * jnp.stack([c_min, c_max]).reshape(2, *shape),
+        spectra_ambiguity=s_scale * jnp.stack([s_min, s_max]),
+        concentration_draws=c_scale * c_draws.reshape(-1, *shape),
+        spectra_draws=s_scale * s_draws,
+        sigma=sigma * a_scale,
         n_free=int(null.shape[0]),
     )
+
+
+def _to_unit_scale(dataset: SpectralDataset) -> tuple[SpectralDataset, float, float]:
+    """The dataset in units where the mean run total and the absorbance RMS are 1.
+
+    Args:
+        dataset: Validated observations, fully measured.
+
+    Returns:
+        The rescaled dataset, ``c_scale`` and ``a_scale``: concentrations were divided by
+        ``c_scale``, absorbance by ``a_scale``, so spectra by ``a_scale / c_scale``.
+
+    Raises:
+        ValueError: If either scale is not finite and positive.
+    """
+    c_scale = float(dataset.initial_state.sum(axis=1).mean())
+    a_scale = float(jnp.sqrt((dataset.absorbance**2).mean()))
+    if not (math.isfinite(c_scale) and c_scale > 0):
+        raise ValueError(f"mean run total of initial_state must be positive, got {c_scale}")
+    if not (math.isfinite(a_scale) and a_scale > 0):
+        raise ValueError(f"absorbance RMS must be positive, got {a_scale}")
+    s_scale = a_scale / c_scale
+    scaled = replace(
+        dataset,
+        absorbance=dataset.absorbance / a_scale,
+        initial_state=dataset.initial_state / c_scale,
+        reference_spectra=dataset.reference_spectra / s_scale,
+        reference_sigma=dataset.reference_sigma / s_scale,
+    )
+    return scaled, c_scale, a_scale
 
 
 def _initial_guess(

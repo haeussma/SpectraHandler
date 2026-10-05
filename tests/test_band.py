@@ -1,7 +1,10 @@
 """Invariants of resolve_band that hold on any data, independent of coverage."""
 
+import dataclasses
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from spectrahandler.curve_resolution import (
@@ -129,3 +132,40 @@ def test_contradictory_reference_is_reported() -> None:
     data = _with_reference(data, -spectra[0])
     with pytest.raises(ValueError, match="no feasible split"):
         resolve_band(data, jax.random.key(1), n_restart=2, n_search=2000)
+
+
+def test_result_does_not_depend_on_units() -> None:
+    """Data in ~M and ~mAU give the same band as in uM and AU, up to the factors.
+
+    The factors are powers of two near 1e-6 and 1e3, so the rescaled data are exact in
+    floating point and the results agree to rounding. Decimal factors change the data by
+    one ulp, and the chain, which branches on exact feasibility tests, turns that into a
+    different but equally valid path. Measured with 1e-6 and 1e3: bands differ by up to
+    9% of their largest value, against up to 4% for a change of key; sigma agrees
+    exactly. That case must still resolve -- before normalisation it raised "no
+    feasible split".
+    """
+    data, spectra, _ = make_realistic_dataset(jax.random.key(0))
+    data = _with_reference(data, spectra[0])
+    kwargs = {"n_iter": 300, "n_burn": 100}
+    ref = resolve_band(data, jax.random.key(1), **kwargs)
+
+    def rescaled(c: float, a: float) -> FeasibleBand:
+        """Concentrations times ``c``, absorbance times ``a``, so spectra times ``a / c``."""
+        converted = dataclasses.replace(
+            data,
+            absorbance=data.absorbance * a,
+            initial_state=data.initial_state * c,
+            reference_spectra=data.reference_spectra * (a / c),
+            reference_sigma=data.reference_sigma * (a / c),
+        )
+        return resolve_band(converted, jax.random.key(1), **kwargs)
+
+    c, a = 2.0**-20, 2.0**10
+    band = rescaled(c, a)
+    np.testing.assert_allclose(band.concentration_lower, ref.concentration_lower * c, rtol=1e-6)
+    np.testing.assert_allclose(band.concentration_upper, ref.concentration_upper * c, rtol=1e-6)
+    np.testing.assert_allclose(band.spectra_lower, ref.spectra_lower * (a / c), rtol=1e-6)
+    np.testing.assert_allclose(band.spectra_upper, ref.spectra_upper * (a / c), rtol=1e-6)
+    assert band.sigma == pytest.approx(ref.sigma * a, rel=1e-6)
+    assert rescaled(1e-6, 1e3).sigma == pytest.approx(ref.sigma * 1e3, rel=1e-6)
