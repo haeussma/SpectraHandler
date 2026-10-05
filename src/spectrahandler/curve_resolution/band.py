@@ -33,7 +33,7 @@ type _State = tuple[Array, Array, Array, Array, Array]
 _TAU_BENCH = 16.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FeasibleBand:
     """Everything the data allow, for every concentration and spectrum value.
 
@@ -45,8 +45,9 @@ class FeasibleBand:
             ``(n_species, n_wavelength)``, in absorbance per ``concentration_unit``.
         spectra_upper: Band upper edge incl. noise margin, same shape and unit.
         concentration_ambiguity: Extremes over the feasible region without the noise
-            margin, shape ``(2, n_run, n_time, n_species)``: the part no amount of
-            repeating the same measurement removes.
+            margin, shape ``(2, n_run, n_time, n_species)``: the rotational ambiguity.
+            The region's non-negativity is tested at ``-z_slack`` noise sd, so these
+            extremes still carry that noise-dependent slack and may dip below zero.
         spectra_ambiguity: Same, shape ``(2, n_species, n_wavelength)``.
         concentration_draws: Flat draws over the region plus propagated noise, shape
             ``(n_draw, n_run, n_time, n_species)``. A typical-solution summary under an
@@ -111,7 +112,8 @@ def resolve_band(
         sigma: Noise standard deviation in absorbance units. ``None`` estimates it from
             the rank-``n_species`` residual of the time course.
         z_slack: Non-negativity is tested at ``-z_slack`` noise sd, and the band gets a
-            ``z_slack`` sd noise margin. 3.5 keeps ~100 true zeros inside ~99% of the time.
+            ``z_slack`` sd noise margin. 3.5 keeps ~100 true zeros all inside ~98% of the
+            time (0.99977 ** 100).
         n_iter: Hit-and-run iterations.
         n_burn: Iterations discarded before draws are kept.
         thin: Keep every ``thin``-th draw after burn-in.
@@ -123,11 +125,30 @@ def resolve_band(
         The band, its ambiguity part, and flat draws.
 
     Raises:
+        RuntimeError: If JAX float64 is not enabled.
         NotImplementedError: If ``dataset.mask`` has any False entry.
-        ValueError: If the mean run total or the absorbance RMS is not finite and
-            positive, or if no feasible split is found: the rank, closure or references
-            contradict the data.
+        ValueError: If a tuning argument is out of range, if the mean run total or the
+            absorbance RMS is not finite and positive, or if no feasible split is found:
+            the rank, closure or references contradict the data, or the search failed
+            numerically.
     """
+    if not jax.config.read("jax_enable_x64"):
+        raise RuntimeError(
+            "resolve_band needs float64: call jax.config.update('jax_enable_x64', True) "
+            "before creating any arrays. spectrahandler never enables it itself."
+        )
+    if sigma is not None and not (math.isfinite(sigma) and sigma > 0):
+        raise ValueError(f"sigma must be finite and positive, got {sigma}")
+    for name, value, ok, rule in [
+        ("z_slack", z_slack, z_slack >= 0, ">= 0"),
+        ("n_burn", n_burn, 0 <= n_burn < n_iter, f">= 0 and < n_iter = {n_iter}"),
+        ("thin", thin, thin >= 1, ">= 1"),
+        ("n_restart", n_restart, n_restart >= 1, ">= 1"),
+        ("n_als", n_als, n_als >= 0, ">= 0"),
+        ("n_search", n_search, n_search >= 1, ">= 1"),
+    ]:
+        if not ok:
+            raise ValueError(f"{name} must be {rule}, got {value}")
     if not bool(dataset.mask.all()):
         raise NotImplementedError("resolve_band requires fully measured runs")
     dataset, c_scale, a_scale = _to_unit_scale(dataset)
@@ -197,8 +218,14 @@ def resolve_band(
 
     guess = _initial_guess(x, x_time, totals, ref_comp, ref_idx, t_particular, null, k)
     theta0 = jax.lax.fori_loop(0, n_als, alternate, guess)
+    theta0 = jnp.where(jnp.isfinite(theta0).all(), theta0, guess)
     k_search, k_chain, k_noise = jax.random.split(key, 3)
     theta, v = _find_feasible(violation, theta0, tau, k_search, n_restart, n_search)
+    if not math.isfinite(float(v)):
+        raise ValueError(
+            f"no feasible split found (violation {float(v)}): numerical failure in the "
+            "search, not evidence that the data contradict the model"
+        )
     if not float(v) == 0.0:
         raise ValueError(
             f"no feasible split found (violation {float(v):.3g}): the rank, closure or "

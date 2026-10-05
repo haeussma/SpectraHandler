@@ -76,7 +76,7 @@ class SpectralDataset:
         return len(self.species)
 
     def __post_init__(self) -> None:
-        """Validate the contract. Raises rather than letting a sampler fail later."""
+        """Validate the contract. Raises rather than letting a fit fail later."""
         _validate(self)
 
     @classmethod
@@ -110,8 +110,10 @@ class SpectralDataset:
             run_ids: One per run.
             mask: Shape ``(n_run, n_time)``. Defaults to all measured.
             reference_spectra: Shape ``(n_species, n_wavelength)`` in ``species`` order
-                as given. Defaults to all ``NaN``.
-            reference_sigma: Shape ``(n_species,)``. Defaults to all ``NaN``.
+                as given. Defaults to all ``NaN``. Units and the per-row all finite or
+                all ``NaN`` rule: see the class docstring.
+            reference_sigma: Shape ``(n_species,)``. Defaults to all ``NaN``. Units and
+                when it must be finite and positive: see the class docstring.
             time_unit: Unit of ``time``.
             wavelength_unit: Unit of ``wavelength``.
             concentration_unit: Unit of concentrations.
@@ -202,7 +204,7 @@ def _validate(ds: SpectralDataset) -> None:
 
     ref_finite = jnp.isfinite(ds.reference_spectra)
     has_ref = ref_finite.all(axis=1)
-    if not bool((has_ref | ~ref_finite.any(axis=1)).all()):
+    if not bool((has_ref | jnp.isnan(ds.reference_spectra).all(axis=1)).all()):
         raise ValueError("each reference_spectra row must be all finite or all NaN")
     sigma_ok = jnp.isfinite(ds.reference_sigma) & (ds.reference_sigma > 0)
     if not bool((sigma_ok | ~has_ref).all()):

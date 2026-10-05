@@ -23,7 +23,7 @@ _TIME_IN_NAME = re.compile(r"_(\d+(?:\.\d+)?)(min|h)$")
 _MINUTES_PER = {"min": 1.0, "h": 60.0}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Scan:
     """One run as recorded: absorbance over time and wavelength.
 
@@ -41,8 +41,19 @@ class Scan:
     metadata: dict[str, str]
 
 
-def _split(path: Path) -> tuple[dict[str, str], list[list[str]]]:
-    """Header as a dict, and the data rows after ``XYDATA`` up to the first blank line."""
+def _split(path: Path, n_extra: int = 0) -> tuple[dict[str, str], list[list[str]]]:
+    """Header as a dict, and the data rows after ``XYDATA`` up to the first blank line.
+
+    Args:
+        path: The ``.csv`` export.
+        n_extra: Data rows expected beyond the header's ``NPOINTS`` (the time row of an
+            interval scan).
+
+    Raises:
+        ValueError: If there is no ``XYDATA`` marker, no data row after it, or the row
+            count disagrees with ``NPOINTS``: a blank line inside the block would
+            otherwise silently truncate it.
+    """
     lines = path.read_text(errors="replace").splitlines()
     try:
         start = next(i for i, ln in enumerate(lines) if ln.strip().upper() == "XYDATA")
@@ -57,6 +68,13 @@ def _split(path: Path) -> tuple[dict[str, str], list[list[str]]]:
         if not line.strip():
             break
         rows.append(line.strip().split(","))
+    if not rows:
+        raise ValueError(f"{path}: no data rows after XYDATA")
+    if "NPOINTS" in header and len(rows) != int(header["NPOINTS"]) + n_extra:
+        raise ValueError(
+            f"{path}: {len(rows) - n_extra} data rows before the first blank line, but "
+            f"NPOINTS says {header['NPOINTS']}"
+        )
     return header, rows
 
 
@@ -82,10 +100,11 @@ def read_interval_scan(path: str | Path) -> Scan:
         The run, wavelength ascending, absorbance as ``(n_time, n_wavelength)``.
 
     Raises:
-        ValueError: If the file has no ``XYDATA`` marker or a row has the wrong length.
+        ValueError: If the file has no ``XYDATA`` marker or no data, the number of
+            wavelength rows disagrees with ``NPOINTS``, or a row has the wrong length.
     """
     path = Path(path)
-    header, rows = _split(path)
+    header, rows = _split(path, n_extra=1)
     time_min = np.array([float(v) for v in rows[0][1:] if v.strip()])
     body = rows[1:]
     if any(len(r) != len(time_min) + 1 for r in body):
@@ -116,7 +135,8 @@ def read_spectrum(path: str | Path) -> tuple[_Floats, _Floats, dict[str, str]]:
         same shape, and the ``KEY,value`` header.
 
     Raises:
-        ValueError: If the file has no ``XYDATA`` marker or the rows are not two columns.
+        ValueError: If the file has no ``XYDATA`` marker or no data, the number of rows
+            disagrees with ``NPOINTS``, or the rows are not two columns.
     """
     path = Path(path)
     header, rows = _split(path)
@@ -141,9 +161,11 @@ def read_spectrum_series(paths: Sequence[str | Path]) -> Scan:
         The run, wavelength ascending, with ``metadata`` from the earliest file.
 
     Raises:
-        ValueError: If a filename carries no time, two files share a time, or the
-            wavelength grids differ.
+        ValueError: If ``paths`` is empty, a filename carries no time, two files share a
+            time, a file fails ``read_spectrum``, or the wavelength grids differ.
     """
+    if not paths:
+        raise ValueError("no files given")
     files = sorted((Path(p) for p in paths), key=_time_from_name)
     time_min = np.array([_time_from_name(p) for p in files])
     if len(set(time_min.tolist())) != len(time_min):

@@ -1,6 +1,7 @@
 """Invariants of resolve_band that hold on any data, independent of coverage."""
 
 import dataclasses
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -169,3 +170,35 @@ def test_result_does_not_depend_on_units() -> None:
     np.testing.assert_allclose(band.spectra_upper, ref.spectra_upper * (a / c), rtol=1e-6)
     assert band.sigma == pytest.approx(ref.sigma * a, rel=1e-6)
     assert rescaled(1e-6, 1e3).sigma == pytest.approx(ref.sigma * 1e3, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"sigma": 0.0}, "sigma must be finite and positive, got 0.0"),
+        ({"sigma": -0.002}, "sigma must be finite and positive, got -0.002"),
+        ({"sigma": float("nan")}, "sigma must be finite and positive, got nan"),
+        ({"z_slack": -1.0}, r"z_slack must be >= 0, got -1.0"),
+        ({"n_iter": 500, "n_burn": 500}, r"n_burn must be >= 0 and < n_iter = 500, got 500"),
+        ({"n_burn": -1}, r"n_burn must be >= 0 and < n_iter = 8000, got -1"),
+        ({"thin": 0}, r"thin must be >= 1, got 0"),
+        ({"n_restart": 0}, r"n_restart must be >= 1, got 0"),
+        ({"n_als": -1}, r"n_als must be >= 0, got -1"),
+        ({"n_search": 0}, r"n_search must be >= 1, got 0"),
+    ],
+)
+def test_rejects_bad_arguments(
+    resolved: tuple[SpectralDataset, FeasibleBand], kwargs: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        resolve_band(resolved[0], jax.random.key(1), **kwargs)
+
+
+def test_requires_float64(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
+    """Without x64 the search fails as a bogus "no feasible split"; refuse up front."""
+    jax.config.update("jax_enable_x64", False)
+    try:
+        with pytest.raises(RuntimeError, match="jax_enable_x64"):
+            resolve_band(resolved[0], jax.random.key(1))
+    finally:
+        jax.config.update("jax_enable_x64", True)

@@ -85,7 +85,7 @@ def make_easy_dataset(
 
     Three well-separated Gaussian bands and a consecutive a -> b -> c time course, which
     is a smoke test for any method. Nothing here is meant to be difficult: failure on
-    this data means the model or the sampler is broken. Note that it is cleaner than any
+    this data means the method is broken. Note that it is cleaner than any
     instrument: absorbance peaks near 12 and the signal is about 6000 times the noise.
 
     Args:

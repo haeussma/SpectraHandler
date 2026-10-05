@@ -78,6 +78,14 @@ def test_time_ignores_order_of_masked_out_points() -> None:
             },
             "all finite or all NaN",
         ),
+        # Not finite anywhere, but not NaN either: inf is not "no reference".
+        (
+            {
+                "reference_spectra": jnp.array([[jnp.inf] * 4, [jnp.nan] * 4]),
+                "reference_sigma": jnp.array([1.0, jnp.nan]),
+            },
+            "all finite or all NaN",
+        ),
         (
             {
                 "reference_spectra": jnp.array([[0.0] * 4, [jnp.nan] * 4]),

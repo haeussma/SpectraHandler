@@ -78,3 +78,35 @@ def test_series_rejects_two_files_at_one_time(data_dir: Path, tmp_path: Path) ->
     shutil.copy(data_dir / "1a" / "1a_1h.csv", tmp_path / "1a_60min.csv")
     with pytest.raises(ValueError, match="same acquisition time"):
         read_spectrum_series(sorted(tmp_path.glob("*.csv")))
+
+
+def test_blank_line_inside_data_is_rejected(data_dir: Path, tmp_path: Path) -> None:
+    """A stray blank line would end the block early; NPOINTS catches the truncation."""
+    lines = (data_dir / PROBE_A).read_text().splitlines()
+    marker = next(i for i, ln in enumerate(lines) if ln.strip() == "XYDATA")
+    lines.insert(marker + 101, "")
+    path = tmp_path / "truncated.csv"
+    path.write_text("\n".join(lines))
+    with pytest.raises(ValueError, match=r"truncated.csv: 99 data rows .* NPOINTS says 551"):
+        read_interval_scan(path)
+
+
+def test_single_spectrum_row_count_must_match_npoints(tmp_path: Path) -> None:
+    path = tmp_path / "short.csv"
+    path.write_text("NPOINTS,     3\nXYDATA\n700,0.1\n699,0.2\n")
+    with pytest.raises(ValueError, match=r"2 data rows .* NPOINTS says 3"):
+        read_spectrum(path)
+
+
+def test_empty_xydata_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "empty.csv"
+    path.write_text("TITLE,x\nXYDATA\n\nfooter,1\n")
+    with pytest.raises(ValueError, match="no data rows"):
+        read_interval_scan(path)
+    with pytest.raises(ValueError, match="no data rows"):
+        read_spectrum(path)
+
+
+def test_empty_series_is_rejected() -> None:
+    with pytest.raises(ValueError, match="no files"):
+        read_spectrum_series([])
