@@ -1,7 +1,8 @@
 # SpectraHandler
 
-Spectral deconvolution for reaction data, built on [JAX](https://docs.jax.dev) and
-[NumPyro](https://num.pyro.ai).
+Spectral deconvolution for reaction data, built on [JAX](https://docs.jax.dev). It
+reports the band of every spectra and concentration-profile split the data allow,
+rather than one answer.
 
 ## Install
 

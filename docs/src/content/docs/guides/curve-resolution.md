@@ -18,9 +18,20 @@ amount of repeating the same measurement removes this; it is a property of the
 experiment, not of the noise.
 
 SpectraHandler therefore reports the **band**: for every concentration and every
-spectrum value, the full range over all splits that fit the data, widened by the
-measurement noise. The band contains the truth whatever the truth is, so its width is
-an honest statement of what your data can and cannot tell you.
+spectrum value, the range over all splits that fit the data, widened by the
+measurement noise. Its width is an honest statement of what your data can and cannot
+tell you, provided that:
+
+- the number of species you give is right,
+- the noise is white and one level everywhere,
+- the absorbance is concentrations times spectra and nothing else (no baseline or
+  offset), and
+- closure holds as given.
+
+The range is explored by a random walk over the splits (hit-and-run), so the band is
+an inner approximation that can fall slightly short of the true extremes, and the
+noise margin is a linearised estimate. On every synthetic test so far the band
+contained the true profiles and spectra.
 
 Methods that return a single split (classic MCR-ALS, NMF), or a narrow Bayesian
 posterior under a convenient prior, pick one point inside that band without telling
@@ -81,53 +92,13 @@ print(f"a at t = {float(data.time[0, 10]):.1f} h: {float(lo):.2f} - {float(hi):.
 On this data species `a` at 3.4 h comes out between about 0.05 and 2.18 µM; the true
 value is 1.58 µM.
 
-## Reading JASCO exports
-
-`spectrahandler.jasco` reads JASCO CSV exports into plain arrays. An interval-scan
-export holds a whole run in one file; a run recorded as one file per timepoint, named
-like `run1_15min.csv` or `run1_2h.csv`, is read with `read_spectrum_series`, which
-orders the files by the time in their names. Either way you get a `Scan` with
-`wavelength_nm`, `time_min` (always in minutes) and `absorbance` shaped
-`(n_time, n_wavelength)`. `SpectralDataset.create` wants a leading run axis and times
-in the dataset's time unit, hours by default:
-
-```python
-from pathlib import Path
-
-import jax
-import jax.numpy as jnp
-
-jax.config.update("jax_enable_x64", True)
-
-from spectrahandler.curve_resolution import SpectralDataset
-from spectrahandler.jasco import read_interval_scan, read_spectrum_series
-
-scan = read_interval_scan("my_scan.csv")
-# one file per timepoint: scan = read_spectrum_series(list(Path("run1").glob("*.csv")))
-
-data = SpectralDataset.create(
-    absorbance=jnp.asarray(scan.absorbance)[None],  # (1 run, n_time, n_wavelength)
-    time=jnp.asarray(scan.time_min)[None] / 60.0,  # minutes -> hours
-    wavelength=jnp.asarray(scan.wavelength_nm),
-    species=("a", "b", "c"),
-    initial_state=jnp.array([[12.5, 0.0, 0.0]]),  # uM at the start, one row per run
-    run_ids=("run 1",),
-    time_unit="h",
-)
-```
-
-Several runs stack along the first axis with `jnp.stack`, and need the same wavelength
-grid and the same number of timepoints. JASCO interval scans are interpolated along
-wavelength, which fools the automatic noise estimate; see
-[Is the number of species right?](#is-the-number-of-species-right) below.
-
 ## Reading the result
 
 | Field | What it is |
 | --- | --- |
 | `concentration_lower`, `concentration_upper` | The band for every amount, in your concentration unit |
 | `spectra_lower`, `spectra_upper` | The band for every spectrum value, in absorbance per concentration unit |
-| `concentration_ambiguity`, `spectra_ambiguity` | The same extremes without the noise margin: the part more of the same data would never remove |
+| `concentration_ambiguity`, `spectra_ambiguity` | The same extremes without the noise margin: the rotational ambiguity, still including the small noise slack allowed below zero |
 | `concentration_draws`, `spectra_draws` | Draws spread evenly over all splits that fit, with noise. A *typical-solution* summary under a stated flat prior, not a calibrated interval |
 | `n_free` | How many numbers the data leave undetermined |
 
@@ -189,3 +160,41 @@ What to do with what you see:
 
 Current limits: every run must be fully measured, the number of species is given, and
 the noise is assumed to be one level everywhere.
+
+## Reading JASCO exports
+
+`spectrahandler.jasco` reads JASCO CSV exports into plain arrays. An interval-scan
+export holds a whole run in one file; a run recorded as one file per timepoint, named
+like `run1_15min.csv` or `run1_2h.csv`, is read with `read_spectrum_series`, which
+orders the files by the time in their names. Either way you get a `Scan` with
+`wavelength_nm`, `time_min` (always in minutes) and `absorbance` shaped
+`(n_time, n_wavelength)`. `SpectralDataset.create` wants a leading run axis and times
+in the dataset's time unit, hours by default:
+
+```python
+import jax
+import jax.numpy as jnp
+
+jax.config.update("jax_enable_x64", True)
+
+from spectrahandler.curve_resolution import SpectralDataset
+from spectrahandler.jasco import read_interval_scan, read_spectrum_series
+
+scan = read_interval_scan("my_scan.csv")
+# one file per timepoint: scan = read_spectrum_series(["run1_0min.csv", "run1_15min.csv"])
+
+data = SpectralDataset.create(
+    absorbance=jnp.asarray(scan.absorbance)[None],  # (1 run, n_time, n_wavelength)
+    time=jnp.asarray(scan.time_min)[None] / 60.0,  # minutes -> hours
+    wavelength=jnp.asarray(scan.wavelength_nm),
+    species=("a", "b", "c"),
+    initial_state=jnp.array([[12.5, 0.0, 0.0]]),  # uM at the start, one row per run
+    run_ids=("run 1",),
+    time_unit="h",
+)
+```
+
+Several runs stack along the first axis with `jnp.stack`, and need the same wavelength
+grid and the same number of timepoints. JASCO interval scans are interpolated along
+wavelength, which fools the automatic noise estimate; see
+[Is the number of species right?](#is-the-number-of-species-right) above.

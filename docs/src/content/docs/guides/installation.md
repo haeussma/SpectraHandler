@@ -19,6 +19,16 @@ uv add spectrahandler
 pip install spectrahandler
 ```
 
+## Plotting
+
+`spectrahandler.plot.plot_noise` draws the noise diagnostics with matplotlib, which
+is an optional extra:
+
+```bash
+uv add "spectrahandler[plot]"
+# or: pip install "spectrahandler[plot]"
+```
+
 ## Enable float64
 
 JAX defaults to 32-bit floats. Least-squares residuals over spectra lose meaningful
