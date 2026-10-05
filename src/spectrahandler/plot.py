@@ -14,6 +14,8 @@ __all__ = ["plot_noise"]
 
 #: Diverging pair with a neutral midpoint: residuals below zero blue, above red.
 _DIVERGING = ("#2a78d6", "#f0efec", "#e34948")
+#: Categorical slots for series that are kinds, not signs: wavelength first, time second.
+_CATEGORICAL = ("#2a78d6", "#eb6834", "#1baf7a")
 _INK, _MUTED, _SIGNAL, _NOISE = "#0b0b0b", "#52514e", "#2a78d6", "#a3a29b"
 
 
@@ -103,7 +105,7 @@ def plot_noise(diagnostics: NoiseDiagnostics, dataset: SpectralDataset) -> "Figu
         np.asarray(diagnostics.autocorrelation_wavelength),
         marker="o",
         ms=4,
-        color=_DIVERGING[0],
+        color=_CATEGORICAL[0],
         lw=1.5,
         label="along wavelength",
     )
@@ -112,7 +114,7 @@ def plot_noise(diagnostics: NoiseDiagnostics, dataset: SpectralDataset) -> "Figu
         np.asarray(diagnostics.autocorrelation_time),
         marker="s",
         ms=4,
-        color=_DIVERGING[2],
+        color=_CATEGORICAL[1],
         lw=1.5,
         label="along time",
     )
