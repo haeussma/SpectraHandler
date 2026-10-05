@@ -1,4 +1,4 @@
-"""The one data structure inference operates on.
+"""The one data structure curve resolution operates on.
 
 Dense arrays with leading batch axes, validated once at construction. See
 ``docs/decisions/0001-array-layout-and-canonical-ordering.md`` for why the axes are

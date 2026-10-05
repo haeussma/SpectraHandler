@@ -1,7 +1,7 @@
 """Synthetic datasets with known ground truth.
 
 Lives in the package rather than in tests because the suite must run before any real
-fixture is reachable, and because coverage checks reuse it. See ``spec.md`` §5.
+fixture is reachable, and because coverage checks reuse it.
 """
 
 import jax
@@ -84,7 +84,7 @@ def make_easy_dataset(
     """Generate a three-species dataset in the easy regime.
 
     Three well-separated Gaussian bands and a consecutive a -> b -> c time course, which
-    is what v0 is validated against. Nothing here is meant to be difficult: failure on
+    is a smoke test for any method. Nothing here is meant to be difficult: failure on
     this data means the model or the sampler is broken. Note that it is cleaner than any
     instrument: absorbance peaks near 12 and the signal is about 6000 times the noise.
 
@@ -117,7 +117,7 @@ def make_realistic_dataset(
     two bands each (a strong near-UV band and a weaker visible one) and b has one, the
     absorbance peaks near 0.33 AU, and the signal is about 160 times the noise. The noise
     is one Gaussian standard deviation shared by every channel and timepoint, which is
-    exactly what the v0 model assumes. Spectra of a and c overlap, so some rotational
+    exactly what resolve_band assumes. Spectra of a and c overlap, so some rotational
     ambiguity is expected here and a wide posterior is not by itself a fault.
 
     Args:
