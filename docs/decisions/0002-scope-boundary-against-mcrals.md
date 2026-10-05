@@ -35,6 +35,12 @@ baseline, 355 nm is the reductant. That knowledge cost two wrong readings to acq
 lives in `mcrals`'s QC checks and in `tests/data/README.md`, and it should not be
 rediscovered.
 
+## Options considered
+
+1. Depend on `mcrals` and ship one adapter to `SpectralDataset`.
+2. Absorb `mcrals`'s IO, QC and preprocessing layers here and retire it.
+3. Write a minimal reader here for the two JASCO layouts and leave `mcrals` alone.
+
 ## Decision
 
 **SpectraHandler owns data loading.** `mcrals` is deprecated: it was a quick test, not a
@@ -54,8 +60,6 @@ plan-level question, not part of this decision.
 
 ## Consequences
 
-Whichever is chosen:
-
 - The QC findings in `tests/data/README.md` must end up executable somewhere. Prose in a
   README does not stop anyone estimating noise along the wrong axis.
 - The choice determines whether SpectraHandler is a *library others install* — the framing
@@ -65,3 +69,11 @@ Whichever is chosen:
 - The dependency tree stays JAX/NumPyro only.
 - The real fixtures in `tests/data/` become reachable as soon as the reader lands, which
   unblocks v1's multi-run and Probe c checks (spec §10).
+
+## Amended 2026-10-05
+
+- The method is the feasible band of [ADR 0003](0003-feasible-band-not-posterior.md), not
+  Bayesian curve resolution: a posterior is reported only for quantities the data
+  identify.
+- The JASCO readers return a `Scan` of plain arrays; the user passes those to
+  `SpectralDataset.create`. They do not produce a `SpectralDataset` directly.
