@@ -1,6 +1,12 @@
 # Bayesian Curve Resolution — Spec
 
-**Status:** draft · **Date:** 2026-09-20 · **Component:** SpectraHandler
+**Status:** superseded in part · **Date:** 2026-09-20 · **Component:** SpectraHandler
+
+> **Superseded 2026-10-05.** §4 (the random-walk model), §7 steps 4–7 and the model in §10
+> are replaced by [ADR 0003](../../docs/decisions/0003-feasible-band-not-posterior.md) and
+> [`plans/002-feasible-band/spec.md`](../002-feasible-band/spec.md). §3 (data layout) and
+> the §7 gate record stand. This directory is deleted at the end of plan 002; its report
+> and bench stay reachable in git history from plan 002 Task 0's commit.
 
 Scope: the **inference module only**, and within it only the stage with **no kinetic
 model** — spectra and concentration profiles, nothing about rate constants, stoichiometry
@@ -674,8 +680,8 @@ Still open:
 - **Where does data loading live?** v0 declares readers out of scope, but something must
   turn `tests/data/probe_a/*.csv` into a `SpectralDataset` eventually. Depend on `mcrals`,
   absorb it, or write a reader here?
-  → [ADR 0002](../../docs/decisions/0002-scope-boundary-against-mcrals.md), unresolved.
-  Does not block steps 0–3.
+  → [ADR 0002](../../docs/decisions/0002-scope-boundary-against-mcrals.md), **accepted**:
+  readers live here; `mcrals` is deprecated.
 - The fixed `τ` for v0. Pick from prior predictive draws rather than by argument — this
   is what Task 2 is for. Note that `τ` is curvature *per channel*, so it scales roughly
   with the square of the bin width: rebinning changes it.

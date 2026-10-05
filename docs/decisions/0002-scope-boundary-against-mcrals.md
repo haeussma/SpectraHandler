@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-09-20
+status: accepted
+date: 2026-10-05
 brain_page: ~/brain/wiki/methods/multivariate-curve-resolution.md
 implements: []
 ---
@@ -37,21 +37,20 @@ rediscovered.
 
 ## Decision
 
-**Not yet made.** Three candidates:
+**SpectraHandler owns data loading.** `mcrals` is deprecated: it was a quick test, not a
+product, and SpectraHandler is the tool for Bayesian curve resolution. Option 1 is
+therefore off the table, and options 2 and 3 collapse into one:
 
-1. **Depend on `mcrals`.** SpectraHandler takes it as a dependency and ships one adapter,
-   `SpectralSeries` → `SpectralDataset`. Cheapest; no duplicated readers. Costs: an
-   unpublished git dependency, `mcrals` pulls in pyMCR and SciPy, and its API is not
-   stable.
-2. **Absorb the IO, QC and preprocessing layers** into SpectraHandler and retire `mcrals`
-   to its MCR-ALS baseline role. One package for users. Costs: a real port, and the
-   inference work stalls behind it.
-3. **Write a minimal reader here** for only the two JASCO layouts documented in
-   `tests/data/README.md`, and leave `mcrals` alone. Smallest immediate diff. Costs: two
-   packages parsing the same files, and the QC knowledge duplicated or lost.
+- Readers for the two JASCO layouts documented in `tests/data/README.md` are written here,
+  in NumPy at the IO boundary, producing a `SpectralDataset` directly. No SciPy, no pyMCR.
+- The QC knowledge in `tests/data/README.md` and in `mcrals`'s checks (noise estimated
+  along time for interpolated exports, the deep UV as instrument baseline, saturation,
+  baseline-window contamination) becomes executable here. `mcrals` is read as a reference
+  for what it learned, not imported.
+- `mcrals` is not a dependency, now or later, and is not kept as an MCR-ALS baseline.
 
-The decision does not block steps 0–3 of the plan, which use synthetic data only. It
-blocks step 8 and anything published.
+Which preprocessing steps (trim, blank, baseline, binning) ship, and in what order, is a
+plan-level question, not part of this decision.
 
 ## Consequences
 
@@ -62,7 +61,7 @@ Whichever is chosen:
 - The choice determines whether SpectraHandler is a *library others install* — the framing
   in `CLAUDE.md` — or an inference engine behind `mcrals`. That is a positioning decision
   as much as a technical one.
-- Option 1 makes SpectraHandler's dependency tree include SciPy and pyMCR, which sits
-  awkwardly with the JAX-only rule in `CLAUDE.md`.
-
-Revisit before step 8, and before the first release.
+- SpectraHandler is a library others install, not an inference engine behind `mcrals`.
+- The dependency tree stays JAX/NumPyro only.
+- The real fixtures in `tests/data/` become reachable as soon as the reader lands, which
+  unblocks v1's multi-run and Probe c checks (spec §10).

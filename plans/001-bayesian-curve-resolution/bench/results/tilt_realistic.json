@@ -1,0 +1,184 @@
+{
+ "dataset": "realistic",
+ "n_free": 4,
+ "n_draws": 2750,
+ "sigma": 0.001980643619488336,
+ "amb_width_c": 1.524012349010207,
+ "amb_width_s": 0.00018232333546729432,
+ "halfnormal": {
+  "spread_nats": 0.23586699500499209,
+  "spread_5_95_nats": 0.16164300703326173,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.9975825616135917,
+  "truth_rank": 0.773090909090909,
+  "truth_deficit_nats": 0.15243538574657323
+ },
+ "exponential": {
+  "spread_nats": 6.574275391653373,
+  "spread_5_95_nats": 4.128813719511484,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.31840734480010496,
+  "truth_rank": 0.048,
+  "truth_deficit_nats": 1.1436735753285632
+ },
+ "horseshoe": {
+  "spread_nats": 26.467304686120855,
+  "spread_5_95_nats": 16.00082594493213,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.00435196041225483,
+  "truth_rank": 0.001090909090909091,
+  "truth_deficit_nats": 0.8621957198320729
+ },
+ "rw2": {
+  "spread_nats": 2252.3540899355703,
+  "spread_5_95_nats": 1067.5652689730182,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.00041286659410453587,
+  "truth_rank": 0.9134545454545454,
+  "truth_deficit_nats": 959.8596561606324
+ },
+ "gp_softplus": {
+  "spread_nats": 7.859700377632905,
+  "spread_5_95_nats": 4.3274243582010765,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.471526687248786,
+  "truth_rank": 0.9730909090909091,
+  "truth_deficit_nats": 5.177322694815807
+ },
+ "gp_log": {
+  "spread_nats": 17.504333223941003,
+  "spread_5_95_nats": 9.637312183659574,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.2082765391665044,
+  "truth_rank": 0.9727272727272728,
+  "truth_deficit_nats": 11.510017151231914
+ },
+ "bspline_exp": {
+  "spread_nats": 8.498976875926417,
+  "spread_5_95_nats": 5.578551707697741,
+  "reachable_fraction": 0.9956363636363637,
+  "effective_volume_fraction": 0.20404102878840383,
+  "truth_rank": 0.04894083272461651,
+  "truth_deficit_nats": 1.3804512992806934
+ },
+ "pspline": {
+  "spread_nats": 39.63980802226888,
+  "spread_5_95_nats": 22.35834167561523,
+  "reachable_fraction": 0.9956363636363637,
+  "effective_volume_fraction": 0.08751730401096737,
+  "truth_rank": 0.5975164353542732,
+  "truth_deficit_nats": 10.403146560454378
+ },
+ "laplace_pdet_term_spread_5_95_nats": 12.88154569155813,
+ "manifold_volume_element_spread_5_95_nats": 1.3216260801418578e-05,
+ "flat_CS_volume_factor": {
+  "spread_nats": 18.747288292853227,
+  "spread_5_95_nats": 12.881559826954458,
+  "reachable_fraction": 1.0,
+  "effective_volume_fraction": 0.018654991938835998,
+  "truth_rank": 0.018545454545454546,
+  "truth_deficit_nats": 2.4055961290396226,
+  "truth_feasible": true
+ },
+ "predicted_split_posterior": {
+  "halfnormal": {
+   "c_cov": 0.9885057471264368,
+   "c_cov_sp": [
+    0.9655172413793104,
+    1.0,
+    1.0
+   ],
+   "s_cov": 0.984375,
+   "c_width": 0.6573003821032417,
+   "ess": 53.35354396345789
+  },
+  "exponential": {
+   "c_cov": 1.0,
+   "c_cov_sp": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "s_cov": 0.9791666666666666,
+   "c_width": 0.6857226581452629,
+   "ess": 51.183556863052495
+  },
+  "horseshoe": {
+   "c_cov": 0.3563218390804598,
+   "c_cov_sp": [
+    0.10344827586206896,
+    0.7931034482758621,
+    0.1724137931034483
+   ],
+   "s_cov": 0.8854166666666666,
+   "c_width": 0.2773246001069889,
+   "ess": 13.20508551759255
+  },
+  "rw2": {
+   "c_cov": 0.0,
+   "c_cov_sp": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "s_cov": 0.5208333333333334,
+   "c_width": 0.0028965188156428066,
+   "ess": 1.947679243617258
+  },
+  "gp_softplus": {
+   "c_cov": 1.0,
+   "c_cov_sp": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "s_cov": 0.9895833333333334,
+   "c_width": 0.8676780383984817,
+   "ess": 269.022959811874
+  },
+  "gp_log": {
+   "c_cov": 0.9540229885057471,
+   "c_cov_sp": [
+    1.0,
+    0.8620689655172413,
+    1.0
+   ],
+   "s_cov": 0.9791666666666666,
+   "c_width": 0.8240208793335192,
+   "ess": 287.9172266140559
+  },
+  "bspline_exp": {
+   "c_cov": 0.9310344827586207,
+   "c_cov_sp": [
+    0.8275862068965517,
+    0.9655172413793104,
+    1.0
+   ],
+   "s_cov": 0.9791666666666666,
+   "c_width": 0.6390783696684244,
+   "ess": 46.50217606793019
+  },
+  "pspline": {
+   "c_cov": 0.9310344827586207,
+   "c_cov_sp": [
+    1.0,
+    0.7931034482758621,
+    1.0
+   ],
+   "s_cov": 0.9583333333333334,
+   "c_width": 0.7216955359198205,
+   "ess": 54.116484422373595
+  },
+  "flat_CS_volume_factor": {
+   "c_cov": 0.9655172413793104,
+   "c_cov_sp": [
+    0.896551724137931,
+    1.0,
+    1.0
+   ],
+   "s_cov": 0.984375,
+   "c_width": 0.6510443803521593,
+   "ess": 51.301227831799
+  }
+ }
+}
