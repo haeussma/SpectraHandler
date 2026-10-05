@@ -1,3 +1,0 @@
-# Throwaway bench scripts: kept beside the report for reuse, not part of the package.
-# Git-ignored so that ty, ruff and pre-commit skip them; results/ and the command lists stay visible.
-*.py
