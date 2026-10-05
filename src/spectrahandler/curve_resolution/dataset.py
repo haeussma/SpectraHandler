@@ -30,10 +30,12 @@ class SpectralDataset:
             species axis follows this order.
         initial_state: Initial concentrations, shape ``(n_run, n_species)``, in
             ``concentration_unit``. Carried but unused until a kinetic model exists.
-        reference_spectra: Known pure spectra, shape ``(n_species, n_wavelength)``,
-            ``NaN`` for species without one. Carried but unused in v0.
-        reference_sigma: Uncertainty on each reference, shape ``(n_species,)``, ``NaN``
-            where absent.
+        reference_spectra: Known pure spectra, shape ``(n_species, n_wavelength)``, in
+            absorbance per ``concentration_unit`` (a scan divided by the concentration
+            it was taken at). A row is all finite, or all ``NaN`` for no reference.
+        reference_sigma: Per-channel noise standard deviation of each reference row,
+            shape ``(n_species,)``, same units. Finite and positive wherever the row is
+            finite; ignored where it is ``NaN``.
         run_ids: One identifier per run.
         time_unit: Unit string for ``time``, e.g. ``"h"``.
         wavelength_unit: Unit string for ``wavelength``, e.g. ``"nm"``.
@@ -197,3 +199,13 @@ def _validate(ds: SpectralDataset) -> None:
         raise ValueError("initial_state must be finite")
     if not bool((ds.initial_state >= 0).all()):
         raise ValueError("initial_state must be non-negative")
+
+    ref_finite = jnp.isfinite(ds.reference_spectra)
+    has_ref = ref_finite.all(axis=1)
+    if not bool((has_ref | ~ref_finite.any(axis=1)).all()):
+        raise ValueError("each reference_spectra row must be all finite or all NaN")
+    sigma_ok = jnp.isfinite(ds.reference_sigma) & (ds.reference_sigma > 0)
+    if not bool((sigma_ok | ~has_ref).all()):
+        raise ValueError(
+            "reference_sigma must be finite and positive for every species with a reference"
+        )

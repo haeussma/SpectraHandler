@@ -71,6 +71,27 @@ def test_time_ignores_order_of_masked_out_points() -> None:
         # wouldn't catch this).
         ({"wavelength": jnp.array([0.0, 1.0, 2.0, jnp.inf])}, "finite"),
         ({"initial_state": jnp.array([[jnp.nan, 1.0]])}, "finite"),
+        (
+            {
+                "reference_spectra": jnp.array([[0.0, jnp.nan, 0.0, 0.0], [jnp.nan] * 4]),
+                "reference_sigma": jnp.array([1.0, jnp.nan]),
+            },
+            "all finite or all NaN",
+        ),
+        (
+            {
+                "reference_spectra": jnp.array([[0.0] * 4, [jnp.nan] * 4]),
+                "reference_sigma": jnp.array([jnp.nan, jnp.nan]),
+            },
+            "reference_sigma",
+        ),
+        (
+            {
+                "reference_spectra": jnp.array([[0.0] * 4, [jnp.nan] * 4]),
+                "reference_sigma": jnp.array([0.0, jnp.nan]),
+            },
+            "reference_sigma",
+        ),
     ],
 )
 def test_validation_rejects(overrides: dict[str, Array], message: str) -> None:
