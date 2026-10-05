@@ -7,14 +7,17 @@ report the band of every spectra/profile split the data allow, not a posterior u
 prior that quietly picks one. Data loading lives here, per
 [ADR 0002](../../docs/decisions/0002-scope-boundary-against-mcrals.md).
 
-It **supersedes** [`plans/001-bayesian-curve-resolution/spec.md`](../001-bayesian-curve-resolution/spec.md)
+It **supersedes** `plans/001-bayesian-curve-resolution/spec.md` (removed in 3ab1596;
+`git show 3ab1596~1:plans/001-bayesian-curve-resolution/spec.md`)
 §4 (the random-walk model), §7 steps 4–7 and the model in §10. It **keeps** §10's goals —
 closure in real units, spectra shared across runs, Probe c as a falsification test — and
 reaches them with constraints on the split instead of priors.
 
 The executable task breakdown is [`plan.md`](plan.md). Evidence behind the choice:
-[`report-spectrum-descriptions.md`](../001-bayesian-curve-resolution/report-spectrum-descriptions.md)
-and its [`bench/results/`](../001-bayesian-curve-resolution/bench/results). The bench
+`plans/001-bayesian-curve-resolution/report-spectrum-descriptions.md` and its `bench/results/`
+(removed in 3ab1596;
+`git show 3ab1596~1:plans/001-bayesian-curve-resolution/report-spectrum-descriptions.md`,
+`git ls-tree -r 3ab1596~1 plans/001-bayesian-curve-resolution/bench/results`). The bench
 scripts were never committed (`bench/.gitignore`).
 
 ---
