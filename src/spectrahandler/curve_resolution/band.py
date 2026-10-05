@@ -26,6 +26,12 @@ type _Parts = Callable[[Array], tuple[Array, Array, Array, Array]]
 type _Violation = Callable[[Array], Array]
 type _State = tuple[Array, Array, Array, Array, Array]
 
+#: Search and edge lengths are fractions of tau = |t_particular|, the scale of T. Calibrated
+#: by dividing the original absolute constants (start step 3, restart spread 3, step
+#: floor 1e-5, edge start 1e-3 and cap 1e4, |det T| > 1e-12) by tau = 16, measured on the
+#: "harder" bench datasets in uM and AU (16.10-16.15; 24.3-24.5 on "realistic").
+_TAU_BENCH = 16.0
+
 
 @dataclass(frozen=True)
 class FeasibleBand:
@@ -154,6 +160,7 @@ def resolve_band(
     rank = int((eq_sv > 1e-8 * eq_sv[0]).sum())
     null = eq_vt[rank:]
     x_time = x[:n_row]
+    tau = jnp.linalg.norm(t_particular)
 
     def parts(theta: Array) -> tuple[Array, Array, Array, Array]:
         t = (t_particular + theta @ null).reshape(k, k)
@@ -170,7 +177,7 @@ def resolve_band(
         v = (jnp.clip(-(c + z_slack * sd_c), 0.0) / sd_c).sum() + (
             jnp.clip(-(sp + z_slack * sd_s[:, None]), 0.0) / sd_s[:, None]
         ).sum()
-        return jnp.where(jnp.abs(jnp.linalg.det(t)) < 1e-12, jnp.inf, v)
+        return jnp.where(jnp.abs(jnp.linalg.det(t)) < 1e-12 * (tau / _TAU_BENCH) ** k, jnp.inf, v)
 
     def to_theta(t: Array) -> Array:
         """The nearest split satisfying closure and references, in free coordinates."""
@@ -191,14 +198,14 @@ def resolve_band(
     guess = _initial_guess(x, x_time, totals, ref_comp, ref_idx, t_particular, null, k)
     theta0 = jax.lax.fori_loop(0, n_als, alternate, guess)
     k_search, k_chain, k_noise = jax.random.split(key, 3)
-    theta, v = _find_feasible(violation, theta0, k_search, n_restart, n_search)
+    theta, v = _find_feasible(violation, theta0, tau, k_search, n_restart, n_search)
     if not float(v) == 0.0:
         raise ValueError(
             f"no feasible split found (violation {float(v):.3g}): the rank, closure or "
             "references contradict the data"
         )
 
-    lo, hi, draws = _hit_and_run(parts, violation, theta, k_chain, n_iter)
+    lo, hi, draws = _hit_and_run(parts, violation, theta, tau, k_chain, n_iter)
     c, sp, sd_c, sd_s = (d[n_burn::thin] for d in draws)
     shape = (dataset.n_run, dataset.n_time, k)
 
@@ -289,11 +296,16 @@ def _initial_guess(
 def _find_feasible(
     violation: _Violation,
     theta0: Array,
+    tau: Array,
     key: Array,
     n_restart: int,
     n_search: int,
 ) -> tuple[Array, Array]:
-    """Adaptive random search for a point with zero violation, restarts in parallel."""
+    """Adaptive random search for a point with zero violation, restarts in parallel.
+
+    Step lengths are in units of ``tau``, the scale of the re-mixing matrix.
+    """
+    unit = tau / _TAU_BENCH
 
     def search(start: Array, key: Array) -> tuple[Array, Array]:
         def cond(state: _State) -> Array:
@@ -309,20 +321,20 @@ def _find_feasible(
             out: _State = (
                 jnp.where(better, cand, theta),
                 jnp.where(better, vc, v),
-                jnp.where(better, step * 1.3, jnp.maximum(step * 0.97, 1e-5)),
+                jnp.where(better, step * 1.3, jnp.maximum(step * 0.97, 1e-5 * unit)),
                 i + 1,
                 key,
             )
             return out
 
-        init = (start, violation(start), jnp.asarray(3.0), jnp.asarray(0), key)
+        init = (start, violation(start), 3.0 * unit, jnp.asarray(0), key)
         theta: Array
         v: Array
         theta, v, _, _, _ = jax.lax.while_loop(cond, body, init)
         return theta, v
 
     k_start, k_search = jax.random.split(key)
-    spread = 3.0 * jnp.arange(n_restart)[:, None]
+    spread = 3.0 * unit * jnp.arange(n_restart)[:, None]
     starts = theta0 + spread * jax.random.normal(k_start, (n_restart, theta0.size))
     thetas, vs = jax.jit(jax.vmap(search))(starts, jax.random.split(k_search, n_restart))
     best = jnp.argmin(vs)
@@ -370,15 +382,23 @@ def _hit_and_run(
     parts: _Parts,
     violation: _Violation,
     theta: Array,
+    tau: Array,
     key: Array,
     n_iter: int,
 ) -> tuple[Array, Array, tuple[Array, Array, Array, Array]]:
-    """Uniform draws over the region, plus the extreme value of every quantity seen."""
+    """Uniform draws over the region, plus the extreme value of every quantity seen.
+
+    Edge searches start and stop at fixed multiples of ``tau``, the scale of the
+    re-mixing matrix.
+    """
+    unit = tau / _TAU_BENCH
 
     def edge(theta: Array, u: Array) -> Array:
         """Distance along ``u`` to the region's boundary: double, then bisect."""
         t = jax.lax.while_loop(
-            lambda t: (violation(theta + t * u) == 0) & (t < 1e4), lambda t: 2 * t, 1e-3
+            lambda t: (violation(theta + t * u) == 0) & (t < 1e4 * unit),
+            lambda t: 2 * t,
+            1e-3 * unit,
         )
 
         def bisect(_: int, ab: tuple[Array, Array]) -> tuple[Array, Array]:
