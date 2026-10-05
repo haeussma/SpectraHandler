@@ -247,4 +247,24 @@ Total suite runtime with these: ~30 s.
 
 ## 8. Gate result
 
-*To be filled in by plan Task 3, step 4.*
+Measured on the library after the unit-normalisation fixes (commits c0ea5a8, 1aa0fef),
+`uv run pytest tests/test_band_coverage.py -q --durations=0`: **9 passed in 29 s** wall
+clock (slowest calls 5.3 s: the two 32000-iteration flat-draw runs; first call includes JIT).
+
+| Check | Result |
+| --- | --- |
+| Band coverage, amounts / spectra, 8 seeds × {realistic, harder} | 1.000 / 1.000 on all 16 |
+| Median amount band | realistic 1.94–2.13 µM; harder 4.46–4.60 µM (gate seeds 0 / 1: 4.49 / 4.56) |
+| Flat-draw coverage of amounts | realistic 0.931–0.977; harder 0.977–1.000 |
+| Flat coverage, harder seed 1, chain keys 1 / 11, 32000 iterations | 1.000 / 1.000 |
+| Run 0 alone vs. jointly with a run lacking `a` | 4.52 → 3.08 µM, coverage 1.000 / 1.000 |
+| Wall clock per fit | ~1.6 s (first call ~5 s, compilation) |
+
+Differences from §5:
+
+- Widths moved by at most 0.05 µM (seed 0/1: 4.47/4.61 → 4.49/4.56; narrowing 4.51 →
+  4.52), because the internal rescaling changes the chain path; the bench's 2.0 / 4.5 still hold.
+- After c0ea5a8 alone the start search failed on harder / seed 0 / chain key 0
+  ("no feasible split", violation 1.02e3) because its fixed step lengths no longer fit
+  the rescaled problem; 1aa0fef scales them with ‖t_particular‖ and the gate passes.
+- Coverage, flat coverage and the narrowing are otherwise as in §5.
