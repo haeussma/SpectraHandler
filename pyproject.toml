@@ -16,12 +16,18 @@ dependencies = [
 [project.scripts]
 spectrahandler = "spectrahandler:main"
 
+[project.optional-dependencies]
+plot = [
+    "matplotlib>=3.11.2",
+]
+
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.11.2",
     "pytest>=8",
     "ruff>=0.16",
     "ty>=0.0.82",

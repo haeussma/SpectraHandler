@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-09-20
+status: accepted
+date: 2026-10-05
 brain_page: ~/brain/wiki/methods/multivariate-curve-resolution.md
 implements: []
 ---
@@ -35,34 +35,45 @@ baseline, 355 nm is the reductant. That knowledge cost two wrong readings to acq
 lives in `mcrals`'s QC checks and in `tests/data/README.md`, and it should not be
 rediscovered.
 
+## Options considered
+
+1. Depend on `mcrals` and ship one adapter to `SpectralDataset`.
+2. Absorb `mcrals`'s IO, QC and preprocessing layers here and retire it.
+3. Write a minimal reader here for the two JASCO layouts and leave `mcrals` alone.
+
 ## Decision
 
-**Not yet made.** Three candidates:
+**SpectraHandler owns data loading.** `mcrals` is deprecated: it was a quick test, not a
+product, and SpectraHandler is the tool for Bayesian curve resolution. Option 1 is
+therefore off the table, and options 2 and 3 collapse into one:
 
-1. **Depend on `mcrals`.** SpectraHandler takes it as a dependency and ships one adapter,
-   `SpectralSeries` → `SpectralDataset`. Cheapest; no duplicated readers. Costs: an
-   unpublished git dependency, `mcrals` pulls in pyMCR and SciPy, and its API is not
-   stable.
-2. **Absorb the IO, QC and preprocessing layers** into SpectraHandler and retire `mcrals`
-   to its MCR-ALS baseline role. One package for users. Costs: a real port, and the
-   inference work stalls behind it.
-3. **Write a minimal reader here** for only the two JASCO layouts documented in
-   `tests/data/README.md`, and leave `mcrals` alone. Smallest immediate diff. Costs: two
-   packages parsing the same files, and the QC knowledge duplicated or lost.
+- Readers for the two JASCO layouts documented in `tests/data/README.md` are written here,
+  in NumPy at the IO boundary, producing a `SpectralDataset` directly. No SciPy, no pyMCR.
+- The QC knowledge in `tests/data/README.md` and in `mcrals`'s checks (noise estimated
+  along time for interpolated exports, the deep UV as instrument baseline, saturation,
+  baseline-window contamination) becomes executable here. `mcrals` is read as a reference
+  for what it learned, not imported.
+- `mcrals` is not a dependency, now or later, and is not kept as an MCR-ALS baseline.
 
-The decision does not block steps 0–3 of the plan, which use synthetic data only. It
-blocks step 8 and anything published.
+Which preprocessing steps (trim, blank, baseline, binning) ship, and in what order, is a
+plan-level question, not part of this decision.
 
 ## Consequences
-
-Whichever is chosen:
 
 - The QC findings in `tests/data/README.md` must end up executable somewhere. Prose in a
   README does not stop anyone estimating noise along the wrong axis.
 - The choice determines whether SpectraHandler is a *library others install* — the framing
   in `CLAUDE.md` — or an inference engine behind `mcrals`. That is a positioning decision
   as much as a technical one.
-- Option 1 makes SpectraHandler's dependency tree include SciPy and pyMCR, which sits
-  awkwardly with the JAX-only rule in `CLAUDE.md`.
+- SpectraHandler is a library others install, not an inference engine behind `mcrals`.
+- The dependency tree stays JAX/NumPyro only.
+- The real fixtures in `tests/data/` become reachable as soon as the reader lands, which
+  unblocks v1's multi-run and Probe c checks (spec §10).
 
-Revisit before step 8, and before the first release.
+## Amended 2026-10-05
+
+- The method is the feasible band of [ADR 0003](0003-feasible-band-not-posterior.md), not
+  Bayesian curve resolution: a posterior is reported only for quantities the data
+  identify.
+- The JASCO readers return a `Scan` of plain arrays; the user passes those to
+  `SpectralDataset.create`. They do not produce a `SpectralDataset` directly.

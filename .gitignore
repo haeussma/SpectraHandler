@@ -15,3 +15,6 @@ wheels/
 
 # Synthetic fixtures are regenerated from a seed, never committed.
 tests/data/synthetic/
+
+# Third-party data we may not redistribute: local only, never committed.
+local/

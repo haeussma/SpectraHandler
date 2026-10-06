@@ -15,7 +15,8 @@ species axis on the factors. Their order is a choice, and it propagates into eve
 likelihood evaluation, every plotting call, and later into the stoichiometric matrix of
 the kinetic model.
 
-The spec ([`plans/001-bayesian-curve-resolution/spec.md`](../../plans/001-bayesian-curve-resolution/spec.md) §3)
+The spec (`plans/001-bayesian-curve-resolution/spec.md` §3; removed in 3ab1596,
+`git show 3ab1596~1:plans/001-bayesian-curve-resolution/spec.md`)
 flags this as the one thing not simplified for v0, because kinetics and multi-run pooling
 must slot in without a breaking change.
 
@@ -56,8 +57,9 @@ internal arrays are never reordered.
 ## Consequences
 
 - **Reversal is expensive.** Every model function, test and plotting call assumes this
-  layout. Confirm before Task 0 of [`plan.md`](../../plans/001-bayesian-curve-resolution/plan.md)
-  is written, not after.
+  layout. Confirm before Task 0 of `plans/001-bayesian-curve-resolution/plan.md`
+  is written, not after. (Plan removed in 3ab1596;
+  `git show 3ab1596~1:plans/001-bayesian-curve-resolution/plan.md`.)
 - A shared wavelength grid is now a hard requirement. v0 raises when grids differ;
   resampling at construction is deferred. This is a real restriction on real data — the
   fixtures in `tests/data/` use 1 nm and 0.5 nm steps and could not be combined today.
