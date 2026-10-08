@@ -44,7 +44,7 @@ def resolved() -> tuple[SpectralDataset, FeasibleBand]:
 def test_shapes(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
     data, band = resolved
     c_shape = (data.n_run, data.n_time, data.n_species)
-    s_shape = (data.n_species, data.n_wavelength)
+    s_shape = (1, data.n_species, data.n_wavelength)  # one set of spectra for all runs
     assert band.concentration_lower.shape == band.concentration_upper.shape == c_shape
     assert band.spectra_lower.shape == band.spectra_upper.shape == s_shape
     assert band.concentration_ambiguity.shape == (2, *c_shape)
@@ -98,8 +98,7 @@ def test_draws_respect_closure(resolved: tuple[SpectralDataset, FeasibleBand]) -
 def test_draws_reproduce_the_data(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
     """Every split reproduces the data to the noise: residual rms close to sigma."""
     data, band = resolved
-    predicted = jnp.einsum("drtk,dkw->rtw", band.concentration_draws, band.spectra_draws)
-    predicted = predicted / band.concentration_draws.shape[0]
+    predicted = (band.concentration_draws @ band.spectra_draws).mean(axis=0)
     rms = float(jnp.sqrt(((predicted - data.absorbance) ** 2).mean()))
     assert rms < 1.5 * SIGMA
 
@@ -109,7 +108,7 @@ def test_reference_lies_inside_its_band(
 ) -> None:
     data, band = resolved
     ref = data.reference_spectra[0]
-    assert bool(((ref >= band.spectra_lower[0]) & (ref <= band.spectra_upper[0])).all())
+    assert bool(((ref >= band.spectra_lower[0, 0]) & (ref <= band.spectra_upper[0, 0])).all())
 
 
 def test_requires_fully_measured_runs() -> None:

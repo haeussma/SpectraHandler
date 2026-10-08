@@ -78,17 +78,17 @@ def _match(fitted: Array, truth: Array) -> Array:
 
 def _coverage(band: FeasibleBand, spectra: Array, concentrations: Array) -> tuple[float, float]:
     """Fraction of true amounts and of true spectrum values inside the band."""
-    p = _match(band.spectra_draws.mean(axis=0), spectra)
+    p = _match(band.spectra_draws.mean(axis=0)[0], spectra)
     c_in = (concentrations >= band.concentration_lower[..., p]) & (
         concentrations <= band.concentration_upper[..., p]
     )
-    s_in = (spectra >= band.spectra_lower[p]) & (spectra <= band.spectra_upper[p])
+    s_in = (spectra >= band.spectra_lower[0, p]) & (spectra <= band.spectra_upper[0, p])
     return float(c_in.mean()), float(s_in.mean())
 
 
 def _flat_coverage(band: FeasibleBand, spectra: Array, concentrations: Array) -> float:
     """Fraction of true amounts inside the central 95% of the flat draws."""
-    p = _match(band.spectra_draws.mean(axis=0), spectra)
+    p = _match(band.spectra_draws.mean(axis=0)[0], spectra)
     lo, hi = jnp.percentile(band.concentration_draws, jnp.array([2.5, 97.5]), axis=0)
     inside = (concentrations >= lo[..., p]) & (concentrations <= hi[..., p])
     return float(inside.mean())

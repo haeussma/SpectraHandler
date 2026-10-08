@@ -10,6 +10,7 @@ The interval covers only what varies between the declared replicates: consecutiv
 from one loading do not cover preparation-to-preparation or day-to-day variation.
 """
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,8 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.scipy.special import betainc
+from jax.scipy.stats import t as student_t
+from jax.typing import ArrayLike
 
 from spectrahandler.kinetics.scheme import Step
 
@@ -46,6 +49,32 @@ class RateEstimate:
     between_sd_log: float | None
     within_sd_log: float
     n: int
+
+    def density(self, rate: ArrayLike) -> Array:
+        """Posterior density of the rate, the distribution behind ``lower`` and ``upper``.
+
+        The log rate follows a Student-t on ``n - 1`` degrees of freedom, centred on
+        ``log(value)`` with scale ``between_sd_log / sqrt(n)``; dividing by the rate turns
+        it into a density over the rate itself.
+
+        Args:
+            rate: Rates at which to evaluate, positive, in 1 / time unit.
+
+        Returns:
+            The density, same shape as ``rate``, in time unit.
+
+        Raises:
+            ValueError: With one replicate: there is no spread to build it from.
+        """
+        if self.between_sd_log is None:
+            raise ValueError("one replicate: no replicate-based density")
+        k = jnp.asarray(rate)
+        scale = self.between_sd_log / math.sqrt(self.n)
+        log_density = student_t.logpdf(
+            jnp.log(k), self.n - 1, loc=math.log(self.value), scale=scale
+        )
+        density: Array = jnp.exp(log_density) / k
+        return density
 
 
 @dataclass(frozen=True)

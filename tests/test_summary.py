@@ -106,3 +106,28 @@ def test_swap_ambiguity_becomes_a_warning(key: jax.Array) -> None:
         "synthetic"
     ]
     assert any("not separately identified" in w for w in summary.warnings)
+
+
+def test_density_holds_the_interval_mass() -> None:
+    """The interval is the central ``level`` of the density; the density integrates to 1."""
+    data, _, _ = make_kinetic_replicates(
+        jax.random.key(0), ONE_STEP, {STEP: 0.8}, initial={"A": 10.0}, between_sd_log=0.02
+    )
+    estimate = fit_kinetics(data, ONE_STEP).summary(level=0.95)["synthetic"].rates[STEP]
+    assert estimate.lower is not None
+    assert estimate.upper is not None
+    total = np.linspace(0.3, 2.0, 200_001)
+    inside = np.linspace(estimate.lower, estimate.upper, 20_001)
+    assert np.trapezoid(np.asarray(estimate.density(total)), total) == pytest.approx(1.0, abs=1e-3)
+    assert np.trapezoid(np.asarray(estimate.density(inside)), inside) == pytest.approx(
+        0.95, abs=1e-3
+    )
+
+
+def test_density_needs_replicates() -> None:
+    data, _, _ = make_kinetic_replicates(
+        jax.random.key(0), ONE_STEP, {STEP: 0.8}, initial={"A": 10.0}, n_replicates=1
+    )
+    estimate = fit_kinetics(data, ONE_STEP).summary()["synthetic"].rates[STEP]
+    with pytest.raises(ValueError, match="one replicate"):
+        estimate.density(0.8)

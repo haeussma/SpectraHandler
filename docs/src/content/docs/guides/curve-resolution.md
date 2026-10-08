@@ -97,7 +97,7 @@ value is 1.58 µM.
 | Field | What it is |
 | --- | --- |
 | `concentration_lower`, `concentration_upper` | The band for every amount, in your concentration unit |
-| `spectra_lower`, `spectra_upper` | The band for every spectrum value, in absorbance per concentration unit |
+| `spectra_lower`, `spectra_upper` | The band for every spectrum value, in absorbance per concentration unit. The run axis has size 1: all runs share one set of spectra |
 | `concentration_ambiguity`, `spectra_ambiguity` | The same extremes without the noise margin: the rotational ambiguity, still including the small noise slack allowed below zero |
 | `concentration_draws`, `spectra_draws` | Draws spread evenly over all splits that fit, with noise. A *typical-solution* summary under a stated flat prior, not a calibrated interval |
 | `n_free` | How many numbers the data leave undetermined |
@@ -105,6 +105,10 @@ value is 1.58 µM.
 Species **without** a reference are resolved only up to relabelling among themselves:
 the band for "b" may be the spectrum you know as "c". Give a reference, or a run where
 one of them is absent, to pin the names.
+
+To see the band of one run, `plot_deconvolution(band, data, data.run_ids[0])` from
+`spectrahandler.plot` shades it for every species; see
+[Plotting results](/SpectraHandler/guides/plotting/).
 
 ## Is the number of species right?
 

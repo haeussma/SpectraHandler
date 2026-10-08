@@ -36,6 +36,11 @@ dev = [
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.format]
+# Plans hold method snippets meant to sit inside a class; formatting them as
+# top-level code strips that indentation. Plans are working material, deleted when done.
+exclude = ["plans/**"]
+
 [tool.ruff.lint]
 select = [
     "E", "W", "F",  # pycodestyle + pyflakes

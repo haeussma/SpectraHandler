@@ -74,7 +74,8 @@ estimated in the same fit. The rate's interval does **not** come from that fit: 
 one run the fit is far more confident than repeated runs agree, because real noise is
 correlated and every run carries small differences of its own. The interval comes from
 how much your replicates disagree: the geometric mean of the replicate rates, with a
-Student-t interval on n − 1 degrees of freedom.
+Student-t interval on n − 1 degrees of freedom. `rate.density(k)` gives the posterior
+density behind that interval, which is what `plot_rate_posterior` draws as the thick curve.
 
 So:
 
@@ -100,13 +101,22 @@ So:
 
 ```python
 import matplotlib.pyplot as plt
-from spectrahandler.plot import plot_kinetic_fit
 
-plot_kinetic_fit(fit, data, wavelengths=[400, 520])
+from spectrahandler.plot import (
+    plot_deconvolution,
+    plot_residuals,
+)  # needs the plot extra: uv add "spectrahandler[plot]"
+
+run = data.run_ids[0]
+plot_deconvolution(fit, data, run)
+plot_residuals(fit, data, run)
 plt.show()
 ```
 
-The right panel shows what is left after the fit, in units of each wavelength's noise
-level. Even static is good. Stripes along wavelength or blocks along time mean the
-scheme, or the assumption of no drifting baseline, does not hold, and the rates are then
-the best the chosen scheme can do, not the truth.
+The first figure splits the run into species: dots are the measured spectra projected
+onto the fitted species spectra, lines are the kinetic model. The second shows what is
+left after the fit, in units of each wavelength's noise level. Even static is good.
+Stripes along wavelength or blocks along time mean the scheme, or the assumption of no
+drifting baseline, does not hold, and the rates are then the best the chosen scheme can
+do, not the truth. [Plotting results](/SpectraHandler/guides/plotting/) lays out every
+run side by side.

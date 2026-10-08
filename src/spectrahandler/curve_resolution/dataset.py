@@ -81,6 +81,54 @@ class SpectralDataset:
         """Number of species."""
         return len(self.species)
 
+    def run_index(self, run_id: str) -> int:
+        """Position of a run on the run axis of every array.
+
+        Args:
+            run_id: One of ``run_ids``.
+
+        Returns:
+            The index of that run.
+
+        Raises:
+            ValueError: If the dataset has no run ``run_id``.
+        """
+        if run_id not in self.run_ids:
+            raise ValueError(f"no run {run_id!r}; the runs are {list(self.run_ids)}")
+        return self.run_ids.index(run_id)
+
+    def project(self, spectra: Array) -> Array:
+        """Concentrations that best reproduce every measured spectrum from given species spectra.
+
+        Least squares per spectrum, ``absorbance @ pinv(spectra)``: no kinetic model and no
+        constraint, so it shows what the spectra alone say about the amounts.
+
+        Args:
+            spectra: Shape ``(n_run, n_species, n_wavelength)``, or
+                ``(1, n_species, n_wavelength)`` for one set shared by all runs; in
+                absorbance per ``concentration_unit``.
+
+        Returns:
+            Shape ``(n_run, n_time, n_species)``, in ``concentration_unit``; ``NaN`` where
+            not measured.
+
+        Raises:
+            ValueError: If ``spectra`` does not fit the dataset's runs, species and
+                wavelengths.
+        """
+        expected = (self.n_species, self.n_wavelength)
+        if (
+            spectra.ndim != 3
+            or spectra.shape[0] not in (1, self.n_run)
+            or spectra.shape[1:] != expected
+        ):
+            raise ValueError(
+                f"spectra must have shape (1 or {self.n_run}, {expected[0]}, {expected[1]}), "
+                f"got {spectra.shape}"
+            )
+        projected: Array = self.absorbance @ jnp.linalg.pinv(spectra)
+        return projected
+
     def __post_init__(self) -> None:
         """Validate the contract. Raises rather than letting a fit fail later."""
         _validate(self)

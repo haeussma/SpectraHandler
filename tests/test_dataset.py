@@ -187,3 +187,29 @@ def test_from_runs_rejects(kwargs: dict[str, object], message: str) -> None:
     arguments.update(kwargs)
     with pytest.raises(ValueError, match=message):
         SpectralDataset.from_runs(**arguments)  # ty: ignore[invalid-argument-type]
+
+
+def test_run_index_finds_runs_by_id() -> None:
+    data = _minimal()
+    assert data.run_index(data.run_ids[-1]) == data.n_run - 1
+    with pytest.raises(ValueError, match="no run 'nope'"):
+        data.run_index("nope")
+
+
+def test_project_recovers_concentrations_from_exact_spectra(key: Array) -> None:
+    from spectrahandler.kinetics import Scheme, make_kinetic_replicates
+
+    data, _, spectra = make_kinetic_replicates(
+        key, Scheme(steps=[("A", "B")]), {("A", "B"): 0.8}, initial={"A": 10.0}, noise=0.0
+    )
+    shared = spectra[None]  # (1, n_species, n_wavelength): one set for all runs
+    per_run = jnp.broadcast_to(shared, (data.n_run, *shared.shape[1:]))
+    np.testing.assert_allclose(data.project(shared), data.project(per_run), atol=1e-10)
+    totals = data.project(shared).sum(axis=-1)
+    np.testing.assert_allclose(totals, 10.0, atol=1e-8)
+
+
+def test_project_rejects_wrong_shape() -> None:
+    data = _minimal()
+    with pytest.raises(ValueError, match="spectra must have shape"):
+        data.project(jnp.ones((data.n_species, data.n_wavelength)))

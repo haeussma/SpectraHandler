@@ -21,8 +21,8 @@ pip install spectrahandler
 
 ## Plotting
 
-`spectrahandler.plot.plot_noise` draws the noise diagnostics with matplotlib, which
-is an optional extra:
+`spectrahandler.plot` draws data, deconvolutions, residuals and diagnostics with
+matplotlib, which is an optional extra:
 
 ```bash
 uv add "spectrahandler[plot]"

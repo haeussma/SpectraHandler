@@ -42,17 +42,19 @@ class FeasibleBand:
             ``(n_run, n_time, n_species)``, in ``concentration_unit``.
         concentration_upper: Band upper edge incl. noise margin, same shape and unit.
         spectra_lower: Band lower edge incl. noise margin, clipped at zero, shape
-            ``(n_species, n_wavelength)``, in absorbance per ``concentration_unit``.
+            ``(1, n_species, n_wavelength)``, in absorbance per ``concentration_unit``.
+            The run axis has size 1: all runs are resolved with one set of spectra, and
+            it broadcasts against per-run arrays.
         spectra_upper: Band upper edge incl. noise margin, same shape and unit.
         concentration_ambiguity: Extremes over the feasible region without the noise
             margin, shape ``(2, n_run, n_time, n_species)``: the rotational ambiguity.
             The region's non-negativity is tested at ``-z_slack`` noise sd, so these
             extremes still carry that noise-dependent slack and may dip below zero.
-        spectra_ambiguity: Same, shape ``(2, n_species, n_wavelength)``.
+        spectra_ambiguity: Same, shape ``(2, 1, n_species, n_wavelength)``.
         concentration_draws: Flat draws over the region plus propagated noise, shape
             ``(n_draw, n_run, n_time, n_species)``. A typical-solution summary under an
             explicit flat prior on the free re-mixing numbers, not a calibrated interval.
-        spectra_draws: Same, shape ``(n_draw, n_species, n_wavelength)``.
+        spectra_draws: Same, shape ``(n_draw, 1, n_species, n_wavelength)``.
         sigma: Noise standard deviation used, in absorbance units.
         n_free: Free re-mixing numbers left after closure and references.
     """
@@ -248,12 +250,12 @@ def resolve_band(
     return FeasibleBand(
         concentration_lower=c_scale * jnp.clip(c_min - margin_c, 0.0).reshape(shape),
         concentration_upper=c_scale * (c_max + margin_c).reshape(shape),
-        spectra_lower=s_scale * jnp.clip(s_min - margin_s[:, None], 0.0),
-        spectra_upper=s_scale * (s_max + margin_s[:, None]),
+        spectra_lower=s_scale * jnp.clip(s_min - margin_s[:, None], 0.0)[None],
+        spectra_upper=s_scale * (s_max + margin_s[:, None])[None],
         concentration_ambiguity=c_scale * jnp.stack([c_min, c_max]).reshape(2, *shape),
-        spectra_ambiguity=s_scale * jnp.stack([s_min, s_max]),
+        spectra_ambiguity=s_scale * jnp.stack([s_min, s_max])[:, None],
         concentration_draws=c_scale * c_draws.reshape(-1, *shape),
-        spectra_draws=s_scale * s_draws,
+        spectra_draws=s_scale * s_draws[:, None],
         sigma=sigma * a_scale,
         n_free=int(null.shape[0]),
     )
