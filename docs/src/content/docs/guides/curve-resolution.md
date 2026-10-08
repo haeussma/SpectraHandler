@@ -118,7 +118,7 @@ after removing that many components, what is left should be plain noise.
 
 ```python
 from spectrahandler.curve_resolution import noise_diagnostics
-from spectrahandler.plot import plot_noise  # needs the plot extra: uv add "spectrahandler[plot]"
+from spectrahandler.plot import plot_noise
 
 diagnostics = noise_diagnostics(data)
 print(f"{diagnostics.n_above_noise} components above the noise edge")

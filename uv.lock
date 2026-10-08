@@ -702,18 +702,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "jax" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "numpyro" },
 ]
 
-[package.optional-dependencies]
-plot = [
-    { name = "matplotlib" },
-]
-
 [package.dev-dependencies]
 dev = [
-    { name = "matplotlib" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -722,15 +717,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jax", specifier = ">=0.11.2" },
-    { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.11.2" },
+    { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "numpyro", specifier = ">=0.22.0" },
 ]
-provides-extras = ["plot"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.16" },
     { name = "ty", specifier = ">=0.0.82" },

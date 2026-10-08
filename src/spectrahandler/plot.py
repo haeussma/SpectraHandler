@@ -1,4 +1,4 @@
-"""Figures for checking data and results by eye. Needs the ``plot`` extra (matplotlib).
+"""Figures for checking data and results by eye, drawn with matplotlib.
 
 Every ``plot_*`` function except :func:`plot_noise` draws one run, picked by its id, on axes
 you pass or on new ones, and returns those axes: place the panels in your own grid, one run
@@ -13,8 +13,12 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 from jax.scipy.stats import norm
+from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
+from matplotlib.lines import Line2D
 
 from spectrahandler.curve_resolution.band import FeasibleBand
 from spectrahandler.curve_resolution.dataset import SpectralDataset
@@ -52,24 +56,14 @@ _SIGNAL, _NOISE = "#2a78d6", "#a3a29b"
 
 
 def _new_axes(n: int) -> list[Axes]:
-    """``n`` axes side by side on a new figure, with a clear error without matplotlib.
+    """``n`` axes side by side on a new figure.
 
     Args:
         n: Number of axes.
 
     Returns:
         The axes, left to right.
-
-    Raises:
-        ImportError: If matplotlib is not installed.
     """
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as err:
-        raise ImportError(
-            "spectrahandler.plot needs matplotlib: install the 'plot' extra, "
-            "e.g. uv add 'spectrahandler[plot]'"
-        ) from err
     fig = plt.figure(figsize=(5.0 * n, 3.8), layout="constrained")
     return list(fig.subplots(1, n, squeeze=False)[0])
 
@@ -140,19 +134,7 @@ def plot_noise(diagnostics: NoiseDiagnostics, dataset: SpectralDataset) -> Figur
 
     Returns:
         A matplotlib figure with three axes.
-
-    Raises:
-        ImportError: If matplotlib is not installed.
     """
-    try:
-        import matplotlib.pyplot as plt
-        from matplotlib.colors import LinearSegmentedColormap
-    except ImportError as err:
-        raise ImportError(
-            "plot_noise needs matplotlib: install the 'plot' extra, "
-            "e.g. uv add 'spectrahandler[plot]'"
-        ) from err
-
     s = np.asarray(diagnostics.singular_values)
     shown = min(len(s), max(20, 3 * diagnostics.rank))
     fig, (ax_sv, ax_res, ax_ac) = plt.subplots(
@@ -265,8 +247,6 @@ def plot_spectra(
     """
     r = dataset.run_index(run)
     ax = ax if ax is not None else _new_axes(1)[0]
-    from matplotlib.collections import LineCollection
-    from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 
     measured = np.asarray(dataset.mask[r])
     time = np.asarray(dataset.time[r])[measured]
@@ -366,8 +346,6 @@ def plot_deconvolution(
             )
             ax_c.plot(time, model[:, s], color=INK, lw=1)
             ax_s.plot(wavelength, spectra[s], color=color[s], lw=1.5, label=label[s])
-        from matplotlib.lines import Line2D
-
         handles, names = ax_c.get_legend_handles_labels()
         handles += [
             Line2D([], [], ls="none", marker="o", ms=4, color=MUTED),
@@ -422,7 +400,6 @@ def plot_residuals(
     r = dataset.run_index(run)
     _check_runs(fit, dataset)
     ax_map, ax_misfit = axes if axes is not None else _new_axes(2)
-    from matplotlib.colors import LinearSegmentedColormap
 
     measured = np.asarray(dataset.mask[r])
     time = np.asarray(dataset.time[r])[measured]

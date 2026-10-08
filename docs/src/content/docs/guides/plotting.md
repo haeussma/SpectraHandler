@@ -8,8 +8,7 @@ sidebar:
 `spectrahandler.plot` draws one run per panel, picked by its run id. Each panel function
 draws on axes you pass, or makes a new figure, and returns the axes, so you build the grid
 you need: one column per shot, a slide with two panels, a paper figure. `plot_noise` draws
-its own three-panel figure over all runs. No function sets a
-title. Plotting needs the optional extra: `uv add "spectrahandler[plot]"`.
+its own three-panel figure over all runs. No function sets a title.
 
 | Function | Draws | Takes |
 | --- | --- | --- |

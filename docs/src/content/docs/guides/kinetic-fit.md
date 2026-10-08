@@ -102,10 +102,7 @@ So:
 ```python
 import matplotlib.pyplot as plt
 
-from spectrahandler.plot import (
-    plot_deconvolution,
-    plot_residuals,
-)  # needs the plot extra: uv add "spectrahandler[plot]"
+from spectrahandler.plot import plot_deconvolution, plot_residuals
 
 run = data.run_ids[0]
 plot_deconvolution(fit, data, run)
