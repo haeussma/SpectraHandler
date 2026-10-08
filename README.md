@@ -9,8 +9,8 @@ rather than one answer.
 ## Install
 
 ```bash
-uv add spectrahandler            # or: pip install spectrahandler
-uv add "spectrahandler[plot]"    # with matplotlib, for spectrahandler.plot
+uv add git+https://github.com/haeussma/SpectraHandler
+# or: pip install git+https://github.com/haeussma/SpectraHandler
 ```
 
 Python 3.13 or newer.
@@ -50,35 +50,6 @@ plot_residuals(fit, data, "shot1")  # what the fit leaves, in noise units
 
 JASCO exports are read with `spectrahandler.jasco`. The guides in [`docs/`](docs/) cover
 curve resolution, kinetic fits and plotting step by step.
-
-## Sharp bits
-
-- **float64 is yours to enable.** The library never turns it on; `fit_kinetics` and
-  `resolve_band` refuse to run in float32.
-- **Units are labels you set.** `time_unit` defaults to `"h"`. Rates come out per
-  `time_unit`, concentrations in the unit of `initial_state`.
-- **Species are sorted alphabetically.** Every species axis follows `data.species`, not
-  the order you passed.
-- **Arrays are `(run, time, wavelength)`.** A single run is `n_run == 1`. Runs of
-  different lengths go through `from_runs`, which pads and masks them.
-- **No missing values where measured.** Readers keep empty cells as `NaN`, and
-  `SpectralDataset` rejects them. Crop the wavelength range first; nothing is dropped
-  for you.
-- **The first time label is time zero.** A dead time or a time offset does not move the
-  rates, but the spectra of the starting species and of any intermediate absorb it. Pass
-  `t_offset` to `fit_kinetics` if you know it.
-- **The interval covers only your declared replicates.** Shots from one loading say
-  nothing about preparation-to-preparation or day-to-day variation. One run gives no
-  interval at all.
-- **Read `summary.warnings`.** They flag non-converged runs, replicate spread no larger
-  than the fit precision, and rates that can be swapped with an equally good fit
-  (A → B → C with a free intermediate spectrum).
-- **The band is not a posterior.** `resolve_band` needs fully measured runs and returns
-  every split the data allow; its spectra have a run axis of size 1, shared by all runs.
-- **Plots take a run id, not an index.** The fit and the dataset must have the same
-  `run_ids`.
-- **Kinetic Studio filenames lie.** The `_NNNs` in a filename is the acquisition window,
-  not a reaction time.
 
 ## Develop
 

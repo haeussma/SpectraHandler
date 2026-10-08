@@ -5,29 +5,21 @@ sidebar:
   order: 1
 ---
 
-SpectraHandler requires Python 3.13 or newer.
+SpectraHandler requires Python 3.13 or newer. It is not on PyPI yet; install it from GitHub.
 
 ## With uv
 
 ```bash
-uv add spectrahandler
+uv add git+https://github.com/haeussma/SpectraHandler
 ```
 
 ## With pip
 
 ```bash
-pip install spectrahandler
+pip install git+https://github.com/haeussma/SpectraHandler
 ```
 
-## Plotting
-
-`spectrahandler.plot` draws data, deconvolutions, residuals and diagnostics with
-matplotlib, which is an optional extra:
-
-```bash
-uv add "spectrahandler[plot]"
-# or: pip install "spectrahandler[plot]"
-```
+Plotting (`spectrahandler.plot`) uses matplotlib, which is installed with it.
 
 ## Enable float64
 
