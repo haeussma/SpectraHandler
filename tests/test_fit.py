@@ -57,7 +57,7 @@ def _shifted(
 
 
 def test_static_offset_and_time_shift_do_not_move_the_rates(key: jax.Array) -> None:
-    """Spec §2.3: both are absorbed by the species spectra."""
+    """A static offset and a time shift are absorbed by the species spectra."""
     data, _, _ = make_kinetic_replicates(
         key, TWO_STEP, {("A", "B"): 0.6, ("B", "C"): 0.25}, initial={"A": 10.0}
     )

@@ -465,7 +465,7 @@ def plot_rate_posterior(
     """The rate of one step in one condition: what each run claims, and the pooled result.
 
     Thin curves are each run's own posterior, normal on the log rate with
-    ``fit.log_rate_sd`` (a diagnostic that is typically too narrow, ADR 0005), labelled
+    ``fit.log_rate_sd`` (a diagnostic that is typically too narrow), labelled
     with the run id; a run whose ``log_rate_sd`` is ``NaN`` gets a dotted line at its rate.
     The thick curve is :meth:`~spectrahandler.kinetics.RateEstimate.density`, the
     replicate-based posterior behind the reported interval; it is left out with one run.

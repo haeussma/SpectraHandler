@@ -42,7 +42,7 @@ def test_realistic_truth_reconstructs_the_data(key: Array) -> None:
 
 
 def test_realistic_absorbance_stays_in_the_beer_lambert_range(key: Array) -> None:
-    """Spec principle 1: bilinearity fails above roughly 1.5 AU."""
+    """Bilinearity (Beer-Lambert) fails above roughly 1.5 AU."""
     ds, _, _ = make_realistic_dataset(key)
     assert float(ds.absorbance.max()) < 1.5
 

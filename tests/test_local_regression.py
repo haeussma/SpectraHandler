@@ -1,4 +1,4 @@
-"""Regression against private stopped-flow data. Local only: skips without the expectations."""
+"""Regression against local-only data. Skips unless the expectations file exists."""
 
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = ROOT / "local" / "regression" / "stopped_flow_expected.json"
 
 pytestmark = pytest.mark.skipif(
-    not EXPECTED.exists(), reason="private stopped-flow regression data is local-only"
+    not EXPECTED.exists(), reason="local regression data is not committed"
 )
 
 

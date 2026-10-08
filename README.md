@@ -23,5 +23,3 @@ Documentation lives in [`docs/`](docs/) (Astro Starlight):
 ```bash
 cd docs && npm install && npm run dev
 ```
-
-Code standards and agent rules: [CLAUDE.md](CLAUDE.md).

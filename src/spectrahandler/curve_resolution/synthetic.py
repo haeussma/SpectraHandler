@@ -1,7 +1,7 @@
 """Synthetic datasets with known ground truth.
 
-Lives in the package rather than in tests because the suite must run before any real
-fixture is reachable, and because coverage checks reuse it.
+Shipped with the package so that methods can be tried, and checked against a known answer,
+without measured data.
 """
 
 import jax
@@ -23,7 +23,7 @@ _EASY_BANDS: _Bands = (
 )
 
 #: Heights in absorbance per uM per cm. a and c carry a strong near-UV band plus a weaker
-#: visible one, loosely the cobalamin pattern; b is unimodal. a and c overlap (cosine 0.47).
+#: visible one; b is unimodal. a and c overlap (cosine similarity 0.47).
 _REALISTIC_BANDS: _Bands = (
     ((355.0, 16.0, 0.026), (525.0, 32.0, 0.009)),
     ((470.0, 24.0, 0.011),),
@@ -49,8 +49,8 @@ def _make_dataset(
     )
 
     time = jnp.linspace(0.0, 10.0, n_time)
-    # Consecutive first-order a -> b -> c, k1 = 0.6, k2 = 0.4 per hour. Closed form, so
-    # no ODE solver is pulled in at this stage.
+    # Consecutive first-order a -> b -> c, k1 = 0.6, k2 = 0.4 per hour. The closed form
+    # needs no ODE solver.
     k1, k2 = 0.6, 0.4
     frac_a = jnp.exp(-k1 * time)
     frac_b = k1 / (k2 - k1) * (jnp.exp(-k1 * time) - jnp.exp(-k2 * time))

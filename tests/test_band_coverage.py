@@ -1,10 +1,8 @@
-"""The gate: does the band contain the truth?
+"""Coverage: does the band contain the truth?
 
-Mirrors the bench of plan 001 (report section B.1, ``bench/results``):
-realistic a -> b -> c data with the first scan dropped, one reference scan of ``a`` at
-50 uM, sigma 0.002. "harder" lifts every spectrum by 0.003 AU/uM so no true value is
-exactly zero, which makes it the clean test of the split. Numbers measured on the library
-(after commits c0ea5a8, 1aa0fef) are quoted next to each threshold.
+The data are realistic a -> b -> c runs with the first scan dropped, one reference scan of
+``a`` at 50 uM, and sigma 0.002. The "harder" set lifts every spectrum by 0.003 AU/uM so
+that no true value is exactly zero, which makes it the clean test of the split.
 """
 
 import jax
@@ -51,8 +49,8 @@ def _dataset(
     )
 
 
-def _bench(seed: int, lift: float) -> tuple[SpectralDataset, Array, Array]:
-    """The bench's single-run data for one noise draw."""
+def _single_run(seed: int, lift: float) -> tuple[SpectralDataset, Array, Array]:
+    """Single-run data for one noise draw."""
     _, spectra, concentrations = make_realistic_dataset(jax.random.key(0), noise=0.0)
     spectra, concentrations = spectra + lift, concentrations[:, 1:]
     initial = jnp.array([[12.5, 0.0, 0.0]])
@@ -97,8 +95,8 @@ def _flat_coverage(band: FeasibleBand, spectra: Array, concentrations: Array) ->
 @pytest.mark.parametrize("seed", [0, 1])
 @pytest.mark.parametrize("dataset", ["realistic", "harder"])
 def test_band_contains_the_truth(dataset: str, seed: int) -> None:
-    """Measured 1.000 / 1.000 on all 16 runs (8 seeds x 2 sets); the bench, 1.00."""
-    data, spectra, concentrations = _bench(seed, LIFT[dataset])
+    """The band holds at least 95% of the true amounts and of the true spectrum values."""
+    data, spectra, concentrations = _single_run(seed, LIFT[dataset])
     band = resolve_band(data, jax.random.key(seed))
     amounts, values = _coverage(band, spectra, concentrations)
     assert amounts >= 0.95, f"band holds {amounts:.3f} of the true amounts"
@@ -106,9 +104,9 @@ def test_band_contains_the_truth(dataset: str, seed: int) -> None:
 
 
 @pytest.mark.parametrize("seed", [0, 1])
-def test_band_width_matches_the_bench(seed: int) -> None:
-    """Median amount band: 4.49 / 4.56 uM measured, 4.5 uM in the bench report."""
-    data, _, _ = _bench(seed, LIFT["harder"])
+def test_band_width_matches_the_single_run(seed: int) -> None:
+    """The median amount band is about 4.5 uM wide; the tolerance covers the seed-to-seed spread."""
+    data, _, _ = _single_run(seed, LIFT["harder"])
     band = resolve_band(data, jax.random.key(seed))
     width = float(jnp.median(band.concentration_upper - band.concentration_lower))
     assert width == pytest.approx(4.5, abs=0.4)
@@ -116,12 +114,12 @@ def test_band_width_matches_the_bench(seed: int) -> None:
 
 @pytest.mark.parametrize("chain_seed", [1, 11])
 def test_flat_draws_cover_an_interior_truth(chain_seed: int) -> None:
-    """Regression: chain key 1 used to land in a gap of the region and stay there.
+    """A chain that starts in a gap of the feasible region must still cover an interior truth.
 
-    Before the shrinkage step, 89% of its draws were infeasible and the flat summary
-    covered 0.25 of the amounts at 32000 iterations. Measured after: 1.000 for both keys.
+    Chain keys 1 and 11 are start points where the draws can stay infeasible; the flat
+    summary of the draws must hold at least 90% of the true amounts.
     """
-    data, spectra, concentrations = _bench(1, LIFT["harder"])
+    data, spectra, concentrations = _single_run(1, LIFT["harder"])
     band = resolve_band(data, jax.random.key(chain_seed), n_iter=32000)
     assert _flat_coverage(band, spectra, concentrations) >= 0.9
 
@@ -130,9 +128,7 @@ def test_a_run_lacking_a_species_narrows_the_band() -> None:
     """Shared spectra help when a run changes which species are present.
 
     A second run starting from ``b`` has no ``a`` at any time, and the non-negativity
-    of that zero cuts the region. Measured on exactly this data: 4.52 -> 3.08 uM,
-    coverage 1.000 (figure: plans/002-feasible-band/figures/band_port.png). A second run
-    that only changes the rates does not help (4.49 -> 4.40 uM, spec section 5).
+    of that zero cuts the region. A second run that only changes the rates does not help.
     """
     _, spectra, _ = make_realistic_dataset(jax.random.key(0), noise=0.0)
     spectra = spectra + LIFT["harder"]

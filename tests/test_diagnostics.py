@@ -26,7 +26,7 @@ def _with_absorbance(dataset: SpectralDataset, absorbance: jax.Array) -> Spectra
 
 
 def test_white_noise_reads_as_three_components() -> None:
-    """Measured: 3 above the edge, sigma 1.98e-3, lag-1 autocorrelation -0.07 / -0.09."""
+    """White noise gives rank 3, sigma near the true 0.002 and no lag-1 autocorrelation."""
     data, _, _ = make_realistic_dataset(jax.random.key(0))
     diag = noise_diagnostics(data)
     assert diag.rank == 3
@@ -40,7 +40,7 @@ def test_white_noise_reads_as_three_components() -> None:
 
 
 def test_an_unmodelled_offset_shows_as_a_fourth_component() -> None:
-    """A flat offset drifting over time is one more component. Measured: 4 above."""
+    """A flat offset drifting over time is one more component."""
     data, _, _ = make_realistic_dataset(jax.random.key(0))
     drift = 0.01 * jnp.sin(jnp.linspace(0.0, 3.0, data.n_time))[None, :, None]
     diag = noise_diagnostics(_with_absorbance(data, data.absorbance + drift))
@@ -48,9 +48,9 @@ def test_an_unmodelled_offset_shows_as_a_fourth_component() -> None:
 
 
 def test_interpolated_export_is_not_white(data_dir: Path) -> None:
-    """The trap in tests/data/README.md: the JASCO export is interpolated along wavelength.
+    """The JASCO export is interpolated along wavelength (see tests/data/README.md).
 
-    Measured on Probe a (>= 340 nm, rank 6): lag-1 autocorrelation 0.96 along wavelength.
+    Probe a (>= 340 nm, rank 6) shows a lag-1 autocorrelation above 0.9 along wavelength.
     White noise would read about 0, so the rank-residual sigma cannot be trusted here.
     """
     scan = read_interval_scan(data_dir / "probe_a" / "20260826_Probe_a.csv")

@@ -13,9 +13,6 @@ dependencies = [
     "numpyro>=0.22.0",
 ]
 
-[project.scripts]
-spectrahandler = "spectrahandler:main"
-
 [project.optional-dependencies]
 plot = [
     "matplotlib>=3.11.2",
@@ -37,8 +34,8 @@ dev = [
 line-length = 100
 
 [tool.ruff.format]
-# Plans hold method snippets meant to sit inside a class; formatting them as
-# top-level code strips that indentation. Plans are working material, deleted when done.
+# Files under plans/ hold code fragments meant to sit inside a class; formatting them as
+# top-level code would strip their indentation.
 exclude = ["plans/**"]
 
 [tool.ruff.lint]

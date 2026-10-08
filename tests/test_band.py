@@ -84,10 +84,7 @@ def test_band_brackets_ambiguity_and_is_non_negative(
 
 
 def test_draws_respect_closure(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
-    """Closure holds in least squares over the rows, so single rows scatter at noise level.
-
-    Measured: overall mean 12.497 uM, rows between 12.31 and 12.71 uM.
-    """
+    """Closure holds in least squares over the rows, so single rows scatter at noise level."""
     data, band = resolved
     totals = band.concentration_draws.sum(axis=-1).mean(axis=0)
     total = float(data.initial_state.sum())
@@ -140,10 +137,8 @@ def test_result_does_not_depend_on_units() -> None:
     The factors are powers of two near 1e-6 and 1e3, so the rescaled data are exact in
     floating point and the results agree to rounding. Decimal factors change the data by
     one ulp, and the chain, which branches on exact feasibility tests, turns that into a
-    different but equally valid path. Measured with 1e-6 and 1e3: bands differ by up to
-    9% of their largest value, against up to 4% for a change of key; sigma agrees
-    exactly. That case must still resolve -- before normalisation it raised "no
-    feasible split".
+    different but equally valid path; for those factors only sigma is compared, and the
+    band must still resolve.
     """
     data, spectra, _ = make_realistic_dataset(jax.random.key(0))
     data = _with_reference(data, spectra[0])

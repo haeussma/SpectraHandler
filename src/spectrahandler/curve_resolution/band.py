@@ -5,7 +5,8 @@ a re-mixing ``C = X @ T``, ``S = inv(T) @ Y`` of the data's own rank-K patterns.
 and references pin some entries of ``T``; non-negativity bounds the rest to a feasible
 region. This module reports that region's projection onto every concentration and
 spectrum value -- the band -- plus a noise margin, and flat draws over the region as a
-labelled typical-solution summary. See ``docs/decisions/0003-feasible-band-not-posterior.md``.
+labelled typical-solution summary. The band is not a posterior: the data do not determine a
+prior over the split.
 """
 
 import math
@@ -26,11 +27,11 @@ type _Parts = Callable[[Array], tuple[Array, Array, Array, Array]]
 type _Violation = Callable[[Array], Array]
 type _State = tuple[Array, Array, Array, Array, Array]
 
-#: Search and edge lengths are fractions of tau = |t_particular|, the scale of T. Calibrated
-#: by dividing the original absolute constants (start step 3, restart spread 3, step
-#: floor 1e-5, edge start 1e-3 and cap 1e4, |det T| > 1e-12) by tau = 16, measured on the
-#: "harder" bench datasets in uM and AU (16.10-16.15; 24.3-24.5 on "realistic").
-_TAU_BENCH = 16.0
+#: Search and edge lengths are fractions of tau = |t_particular|, the scale of T. The step,
+#: spread, floor, cap and determinant constants below are absolute values at the reference
+#: scale tau = 16 (typical for concentrations in uM and absorbance in AU), and are rescaled
+#: by tau / 16.
+_TAU_REFERENCE = 16.0
 
 
 @dataclass(frozen=True, eq=False)
@@ -200,7 +201,9 @@ def resolve_band(
         v = (jnp.clip(-(c + z_slack * sd_c), 0.0) / sd_c).sum() + (
             jnp.clip(-(sp + z_slack * sd_s[:, None]), 0.0) / sd_s[:, None]
         ).sum()
-        return jnp.where(jnp.abs(jnp.linalg.det(t)) < 1e-12 * (tau / _TAU_BENCH) ** k, jnp.inf, v)
+        return jnp.where(
+            jnp.abs(jnp.linalg.det(t)) < 1e-12 * (tau / _TAU_REFERENCE) ** k, jnp.inf, v
+        )
 
     def to_theta(t: Array) -> Array:
         """The nearest split satisfying closure and references, in free coordinates."""
@@ -310,7 +313,7 @@ def _initial_guess(
     picked = x[x_time.shape[0] :]
     rows, comps = [picked], [ref_comp]
     free_species = [i for i in range(k) if i not in {int(j) for j in ref_idx}]
-    # ponytail: greedy farthest-row picking, a K-step Python loop over species, not data.
+    # Greedy farthest-row picking; the Python loop runs over species (K steps), not data.
     for species in free_species:
         basis = jnp.concatenate(rows)
         resid = x_time - x_time @ jnp.linalg.pinv(basis) @ basis if basis.shape[0] else x_time
@@ -334,7 +337,7 @@ def _find_feasible(
 
     Step lengths are in units of ``tau``, the scale of the re-mixing matrix.
     """
-    unit = tau / _TAU_BENCH
+    unit = tau / _TAU_REFERENCE
 
     def search(start: Array, key: Array) -> tuple[Array, Array]:
         def cond(state: _State) -> Array:
@@ -420,7 +423,7 @@ def _hit_and_run(
     Edge searches start and stop at fixed multiples of ``tau``, the scale of the
     re-mixing matrix.
     """
-    unit = tau / _TAU_BENCH
+    unit = tau / _TAU_REFERENCE
 
     def edge(theta: Array, u: Array) -> Array:
         """Distance along ``u`` to the region's boundary: double, then bisect."""

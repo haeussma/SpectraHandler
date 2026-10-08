@@ -30,7 +30,7 @@ tell you, provided that:
 
 The range is explored by a random walk over the splits (hit-and-run), so the band is
 an inner approximation that can fall slightly short of the true extremes, and the
-noise margin is a linearised estimate. On every synthetic test so far the band
+noise margin is a linearised estimate. On every synthetic test the band
 contained the true profiles and spectra.
 
 Methods that return a single split (classic MCR-ALS, NMF), or a narrow Bayesian

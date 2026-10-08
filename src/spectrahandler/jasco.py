@@ -1,9 +1,9 @@
 """Readers for JASCO V-730 CSV exports.
 
-Two layouts, both documented with their traps in ``tests/data/README.md``: an interval
-scan (one file, every timepoint) and a single spectrum (one file per timepoint, time in
-the filename). Readers return the file's numbers unchanged apart from sorting wavelength
-ascending; no trimming, blanking or resampling happens here.
+Two layouts are supported: an interval scan (one file, every timepoint) and a single
+spectrum (one file per timepoint, time in the filename). Readers return the file's numbers
+unchanged apart from sorting wavelength ascending; no trimming, blanking or resampling
+happens here.
 """
 
 import re

@@ -1,4 +1,4 @@
-"""Maximum likelihood per run for a first-order scheme (ADR 0005).
+"""Maximum likelihood per run for a first-order scheme.
 
 Per run ``r``: ``D_r(t, λ) = Σ_s c_rs(t) S_rs(λ) + ε``, with ``c_r(t)`` from the scheme,
 spectra free, and independent Gaussian noise with its own level per wavelength. Given
@@ -9,7 +9,7 @@ variance is ``RSS_λ / n``; both are solved exactly, leaving the profile log lik
 Runs are fitted independently. What runs share is decided afterwards, by condition, in
 :func:`spectrahandler.kinetics.summary.summarize`.
 
-Two things the data cannot tell apart are absorbed rather than fitted (spec §2.3): a
+Two things the data cannot tell apart are absorbed rather than fitted: a
 static offset and a shift of the time axis both end up in the species spectra. A shift of
 the time axis leaves the rates and the spectra of end products unchanged; the spectra of
 the starting species and of every intermediate absorb it and describe the state at the
@@ -56,7 +56,7 @@ class KineticFit:
         log_rate_sd: Shape ``(n_run, n_steps)``. Within-run standard deviation of the
             log rates from the curvature of the likelihood; ``NaN`` where the curvature
             is not positive definite. A diagnostic only: it assumes independent noise and
-            is typically too small (ADR 0005).
+            is typically too small.
         spectra: Shape ``(n_run, n_species, n_wavelength)``, in absorbance per
             concentration unit. Includes any static offset of the run.
         concentrations: Shape ``(n_run, n_time, n_species)``; ``NaN`` where not measured.
@@ -132,9 +132,9 @@ def _maximise(
 ) -> tuple[Array, Array, Array]:
     """Damped Newton (Levenberg-Marquardt) on the negative profile log likelihood.
 
-    A handful of log rates, exact JAX gradient and Hessian: Newton converges in tens of
-    steps where BFGS line searches stall (prototype, plan 004). Each step is capped at a
-    factor e² in any rate. Converged means the Hessian is positive definite and the
+    With a handful of log rates and exact JAX gradient and Hessian, Newton converges in
+    tens of steps where BFGS line searches can stall. Each step is capped at a factor e²
+    in any rate. Converged means the Hessian is positive definite and the
     Newton decrement, the gain still available, is below 1e-6 log-likelihood units.
 
     Returns:

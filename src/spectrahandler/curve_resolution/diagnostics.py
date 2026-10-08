@@ -55,7 +55,7 @@ def _autocorrelation(x: Array, axis: int, max_lag: int) -> Array:
     """Autocorrelation of ``x`` along ``axis`` for lags ``0 .. max_lag``, pooled."""
     x = jnp.moveaxis(x, axis, -1)
     energy = (x**2).sum()
-    # ponytail: a Python loop over lag values (max_lag ~ 10), not over data.
+    # The Python loop runs over lag values (max_lag is small), not over data.
     return jnp.stack(
         [energy / energy]
         + [(x[..., :-lag] * x[..., lag:]).sum() / energy for lag in range(1, max_lag + 1)]

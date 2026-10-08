@@ -1,8 +1,8 @@
 """The one data structure curve resolution operates on.
 
-Dense arrays with leading batch axes, validated once at construction. See
-``docs/decisions/0001-array-layout-and-canonical-ordering.md`` for why the axes are
-ordered ``(run, time, wavelength)`` and why species are sorted alphabetically.
+Dense arrays with leading batch axes, validated once at construction. The axes are ordered
+``(run, time, wavelength)``, and species are sorted alphabetically so that every array with
+a species axis has one canonical order regardless of how the caller listed them.
 """
 
 from collections.abc import Mapping, Sequence
@@ -32,7 +32,7 @@ class SpectralDataset:
         species: Species names, sorted alphabetically and unique. Every array with a
             species axis follows this order.
         initial_state: Initial concentrations, shape ``(n_run, n_species)``, in
-            ``concentration_unit``. Carried but unused until a kinetic model exists.
+            ``concentration_unit``.
         reference_spectra: Known pure spectra, shape ``(n_species, n_wavelength)``, in
             absorbance per ``concentration_unit`` (a scan divided by the concentration
             it was taken at). A row is all finite, or all ``NaN`` for no reference.

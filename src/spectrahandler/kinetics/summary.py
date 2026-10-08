@@ -1,4 +1,4 @@
-"""Pool replicate runs per condition (ADR 0005).
+"""Pool replicate runs per condition.
 
 Rates are combined on the log scale: the geometric mean, with a Student-t interval on
 ``n - 1`` degrees of freedom from the spread between replicates. For normally

@@ -1,6 +1,6 @@
 # Test data
 
-Raw UV-Vis exports used for implementing and testing SpectraHandler. Everything here is
+Raw UV-Vis exports used for testing SpectraHandler. Everything here is
 **untouched instrument output** — no trimming, no baseline subtraction, no resampling.
 Derived matrices do not belong in this folder; if a test needs one, compute it.
 
@@ -11,8 +11,7 @@ Two experiments, two file layouts:
 | [`probe_a/`](probe_a) | Cobalamin methylation time course, 2026-08-26, four cuvettes | JASCO **interval scan** — one file, all timepoints |
 | [`1a/`](1a) | Earlier cobalamin time course, 2026-08-12 | One file **per spectrum**, time in the filename |
 
-Provenance: both came from `~/code/mcrals`, where an MCR-ALS fit was already run against
-them. That fit is the reference result, not ground truth — see
+An MCR-ALS fit was run on both; it is the reference result, not ground truth — see
 [Reference result](#reference-result).
 
 ---
@@ -136,8 +135,8 @@ fits succeed.
 
 ## Traps in this data
 
-Each of these produced a wrong answer at least once. They are the reason the fixtures are
-worth keeping.
+Each of these can produce a wrong answer. They are the reason the fixtures are worth
+keeping.
 
 - **Wavelength-interpolated export.** The interval-scan files are smoothed/interpolated
   along wavelength, so neighbouring channels are not independent. Estimating noise along
@@ -166,7 +165,7 @@ worth keeping.
 
 ![MCR-ALS reference fit](probe_a/reference_mcrals_figure.png)
 
-Produced by `~/code/mcrals` (`examples/figure_probe_a.py`): six components, runs a/c/d
+An MCR-ALS fit with six components, runs a/c/d
 stacked column-wise to force one shared set of pure spectra, closure at 12.5 µM over the
 four cobalamin-bearing components, noise estimated along time.
 
@@ -175,17 +174,17 @@ show cob(I) decaying, cob(II) rising and falling, and methylcobalamin accumulati
 ~12 µM — but the enzyme changes the route: without it, Co(III) aquo/hydroxo carries the
 end state instead.
 
-Treat this as **a plausible prior answer to reproduce and argue with**, not as ground
-truth. It is an MCR-ALS fit and carries rotational ambiguity; SpectraHandler exists partly
-to put credible intervals on exactly these numbers.
+Treat this as **a reference to compare against**, not as ground truth. It is an MCR-ALS fit
+and carries rotational ambiguity; SpectraHandler exists partly to put credible intervals on
+exactly these numbers.
 
 ## Not recorded here
 
-Fill these in when known — they are needed for any quantitative claim:
+These are needed for any quantitative claim and are not known for this data:
 
-- [ ] Enzyme identity, concentration, and batch
-- [ ] Buffer composition and pH
-- [ ] Ti(III) citrate concentration
-- [ ] Temperature
-- [ ] Cuvette path length (1 cm assumed)
-- [ ] Whether `1a` and `probe_a` share a cobalamin stock
+- Enzyme identity, concentration, and batch
+- Buffer composition and pH
+- Ti(III) citrate concentration
+- Temperature
+- Cuvette path length (1 cm assumed)
+- Whether `1a` and `probe_a` share a cobalamin stock
