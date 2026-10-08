@@ -1,7 +1,6 @@
 ---
 status: accepted
 date: 2026-09-20
-brain_page: ~/brain/wiki/methods/multivariate-curve-resolution.md
 implements: [src/spectrahandler/curve_resolution/dataset.py]
 ---
 

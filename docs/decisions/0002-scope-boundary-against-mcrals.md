@@ -1,7 +1,6 @@
 ---
 status: accepted
 date: 2026-10-05
-brain_page: ~/brain/wiki/methods/multivariate-curve-resolution.md
 implements: []
 ---
 

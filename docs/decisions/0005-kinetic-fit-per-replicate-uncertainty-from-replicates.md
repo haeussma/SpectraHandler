@@ -2,7 +2,6 @@
 status: accepted
 date: 2026-10-06
 source_paper: doi:10.3982/ECTA9097
-brain_page: ~/brain/wiki/methods/global-spectral-kinetic-analysis.md
 implements: [src/spectrahandler/kinetics/fit.py, src/spectrahandler/kinetics/summary.py]
 ---
 

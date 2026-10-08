@@ -2,7 +2,6 @@
 status: accepted
 date: 2026-10-05
 source_paper: doi:10.3982/ECTA16773
-brain_page: ~/brain/wiki/methods/multivariate-curve-resolution.md
 implements: [src/spectrahandler/curve_resolution/band.py]
 ---
 
@@ -103,7 +102,8 @@ and 4.5 µM (harder) on a 12.5 µM total, about 1.5 s per fit.
   constrained optimisation, and polygon inflation (Sawall et al. 2013) computes `Θ`
   exactly. One of those becomes necessary as the number of free coordinates grows.
 - **Two fixes over the bench prototype.** The bench's `remix.py` was never committed; the
-  corrected algorithm lives in `src/spectrahandler/curve_resolution/band.py` (plan 002).
+  corrected algorithm lives in `src/spectrahandler/curve_resolution/band.py` (plan 002; removed,
+  `git show 712b8dd:plans/002-feasible-band/`).
   (a) `Θ` is not convex, so a uniform step can
   land in a gap; from there every bracket is empty and the chain never moves again. One
   chain key had 89% infeasible draws and flat coverage 0.25. Slice-sampling shrinkage

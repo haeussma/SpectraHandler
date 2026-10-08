@@ -98,8 +98,6 @@ on GitHub Pages. Internal working material never goes there.
 | Spec — what we are building, and why | `plans/NNN-slug/spec.md` | no | delete when done |
 | Plan — executable task breakdown | `plans/NNN-slug/plan.md` | no | delete when done |
 | ADR — a decision with lasting consequence | `docs/decisions/NNNN-slug.md` | no | forever |
-| The science: methods, concepts, papers | `~/brain/wiki/methods/<slug>.md` | no | forever |
-| Which methods this repo relies on | `~/brain/projects/spectrahandler.md` | no | forever |
 | User-facing explanation and API docs | `docs/src/content/docs/` | **yes** | forever |
 | Test fixture provenance and traps | `tests/data/README.md` | no | with the data |
 
@@ -108,8 +106,9 @@ When a plan contains a choice that would be expensive to reverse, lift it into a
 link to it. Plans get deleted. ADRs do not.
 
 `docs/decisions/` sits outside `docs/src/content/docs/`, so Astro does not build it — it
-is versioned with the code and invisible to the site. `/spec-link` writes these and wires
-the matching brain page in the other direction.
+is versioned with the code and invisible to the site.
+
+Plans hold text only — no figures. Regenerate a figure from the script that made it.
 
 **Do not start building a feature without a plan.** If one does not exist for the work at
 hand, write it first — `/brainstorm` if the shape is still open, `/write-plan` if it is not.
@@ -144,10 +143,3 @@ at commit time — they catch a broken edit within seconds instead of twenty min
 - Fitting code exposes its tuning knobs (initial guesses, priors, bounds, tolerances) as
   arguments with defaults — real spectra need tuning a clean model can't anticipate.
 - Keep notebooks out of `src/`.
-
-## Vault link
-
-When a method implemented here also has a page in `~/brain/wiki/methods/`, run
-`/spec-link` — it fills the page's `implements:` frontmatter, writes the matching ADR
-under `docs/decisions/`, and logs the operation. Science and code stay linked in both
-directions or the link rots.

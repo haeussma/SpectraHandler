@@ -1,7 +1,6 @@
 # Architecture decision records
 
-One file per decision, `NNNN-slug.md`. Written by the `/spec-link` command, which also
-wires the matching `~/brain/wiki/methods/` page in the other direction.
+One file per decision, `NNNN-slug.md`.
 
 An ADR is **why we chose something, kept forever** — the counterpart to a plan in
 [`../../plans/`](../../plans), which records what we are doing and is deleted when done.
@@ -13,21 +12,20 @@ These files are **not published**. Astro only builds `docs/src/content/docs/`, s
 directory is versioned with the code and invisible to the docs site. If a decision is also
 worth explaining to users, that is a separate page under `src/content/docs/`.
 
-Required shape, per `/spec-link`:
+Required shape:
 
 ```markdown
 ---
 status: proposed | accepted | superseded
 date: YYYY-MM-DD
 source_paper: doi:10.xxxx/...    # or omit
-brain_page: ~/brain/wiki/methods/<slug>.md
 implements: [src/spectrahandler/<module>.py]
 ---
 
 # NNNN — <decision>
 
 ## Context
-What the science says, citing the paper and the brain page.
+What the science says, citing the paper.
 
 ## Decision
 What we actually coded, and where it deviates from the source.

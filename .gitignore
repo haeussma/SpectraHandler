@@ -18,3 +18,19 @@ tests/data/synthetic/
 
 # Third-party data we may not redistribute: local only, never committed.
 local/
+
+# Claude Code: personal, per-machine.
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/worktrees/
+.superpowers/
+
+# Plans hold text only.
+plans/**/figures/
+
+# Misc
+.DS_Store
+*.orig
+.coverage
+htmlcov/
+.ipynb_checkpoints/
