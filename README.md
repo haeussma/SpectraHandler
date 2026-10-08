@@ -1,10 +1,11 @@
 # SpectraHandler
 
-Spectral deconvolution for reaction data, built on [JAX](https://docs.jax.dev). From a
-time course of absorbance spectra it resolves species concentrations and pure spectra,
-fits first-order kinetics per run and pools replicates into rate constants with an
-interval. Without a kinetic model, it reports the band of every split the data allow,
-rather than one answer.
+Spectral deconvolution for reaction data. From a time course of absorbance spectra it
+resolves species concentrations and pure spectra, fits first-order kinetics per run and
+pools replicates into rate constants with an interval. Without a kinetic model, it reports
+the band of every split the data allow, rather than one answer.
+
+Documentation: [haeussma.github.io/SpectraHandler](https://haeussma.github.io/SpectraHandler/)
 
 ## Install
 
@@ -48,8 +49,9 @@ plot_deconvolution(fit, data, "shot1")  # concentrations and spectra of one run
 plot_residuals(fit, data, "shot1")  # what the fit leaves, in noise units
 ```
 
-JASCO exports are read with `spectrahandler.jasco`. The guides in [`docs/`](docs/) cover
-curve resolution, kinetic fits and plotting step by step.
+JASCO exports are read with `spectrahandler.jasco`. The
+[guides](https://haeussma.github.io/SpectraHandler/) cover curve resolution, kinetic fits
+and plotting step by step.
 
 ## Develop
 

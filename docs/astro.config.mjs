@@ -9,7 +9,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'SpectraHandler',
-			description: 'Spectral deconvolution for reaction data, on JAX and NumPyro.',
+			description: 'Spectral deconvolution for reaction data.',
 			lastUpdated: true,
 			editLink: {
 				baseUrl: 'https://github.com/haeussma/SpectraHandler/edit/main/docs/',

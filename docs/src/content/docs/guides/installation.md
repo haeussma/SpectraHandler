@@ -23,7 +23,7 @@ Plotting (`spectrahandler.plot`) uses matplotlib, which is installed with it.
 
 ## Enable float64
 
-JAX defaults to 32-bit floats. Least-squares residuals over spectra lose meaningful
+Computations default to 32-bit floats. Least-squares residuals over spectra lose meaningful
 precision at that width, so enable 64-bit before importing anything that builds arrays:
 
 ```python

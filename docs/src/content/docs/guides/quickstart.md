@@ -8,7 +8,7 @@ sidebar:
 The curve-resolution workflow, with a runnable example, is in
 [Curve resolution with honest uncertainty](../curve-resolution/).
 
-Every example needs float64, set once before anything else touches JAX:
+Every example needs float64, switched on once at the top of your script:
 
 ```python
 import jax
