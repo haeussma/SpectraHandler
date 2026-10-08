@@ -1,22 +1,26 @@
 """Figures for checking a resolution by eye. Needs the ``plot`` extra (matplotlib)."""
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from spectrahandler.curve_resolution.dataset import SpectralDataset
 from spectrahandler.curve_resolution.diagnostics import NoiseDiagnostics
+from spectrahandler.kinetics.fit import KineticFit
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
-__all__ = ["plot_noise"]
+__all__ = ["plot_kinetic_fit", "plot_noise"]
 
 #: Diverging pair with a neutral midpoint: residuals below zero blue, above red.
 _DIVERGING = ("#2a78d6", "#f0efec", "#e34948")
 #: Categorical slots for series that are kinds, not signs: wavelength first, time second.
 _CATEGORICAL = ("#2a78d6", "#eb6834", "#1baf7a")
 _INK, _MUTED, _SIGNAL, _NOISE = "#0b0b0b", "#52514e", "#2a78d6", "#a3a29b"
+#: Species slots, fixed order, never cycled: a sixth species is an error, not a new hue.
+_SPECIES = ("#2a78d6", "#eb6834", "#1baf7a", "#8c5bd6", "#c4950a")
 
 
 def plot_noise(diagnostics: NoiseDiagnostics, dataset: SpectralDataset) -> "Figure":
@@ -127,6 +131,117 @@ def plot_noise(diagnostics: NoiseDiagnostics, dataset: SpectralDataset) -> "Figu
     ax_ac.legend(frameon=False, fontsize=8)
 
     for ax in (ax_sv, ax_res, ax_ac):
+        title = ax.get_title()
+        ax.set_title("")
+        ax.set_title(title, loc="left", fontsize=9.5)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+    return fig
+
+
+def plot_kinetic_fit(
+    fit: KineticFit, dataset: SpectralDataset, *, wavelengths: Sequence[float]
+) -> "Figure":
+    """Three panels: data against model, the species spectra, and what is left.
+
+    Left, absorbance over time at up to three wavelengths, every run overlaid: dots are
+    data, black lines the fitted model. Middle, each species' spectrum per run (thin)
+    and their mean (thick). Right, the residual of every run divided by that run's
+    fitted noise level per wavelength, runs stacked: even static means the model and
+    the noise level explain the data; stripes or blocks mean something is missing.
+
+    Args:
+        fit: From :func:`spectrahandler.kinetics.fit_kinetics` on ``dataset``.
+        dataset: The data that was fitted.
+        wavelengths: One to three wavelengths for the left panel, in
+            ``dataset.wavelength_unit``; the nearest channel is shown.
+
+    Returns:
+        A matplotlib figure with three axes.
+
+    Raises:
+        ValueError: If not one to three wavelengths are given, or there are more than
+            five species.
+        ImportError: If matplotlib is not installed.
+    """
+    if not 1 <= len(wavelengths) <= len(_CATEGORICAL):
+        raise ValueError(f"give 1 to {len(_CATEGORICAL)} wavelengths, got {len(wavelengths)}")
+    if len(fit.species) > len(_SPECIES):
+        raise ValueError(f"plot_kinetic_fit draws at most {len(_SPECIES)} species")
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LinearSegmentedColormap
+    except ImportError as err:
+        raise ImportError(
+            "plot_kinetic_fit needs matplotlib: install the 'plot' extra, "
+            "e.g. uv add 'spectrahandler[plot]'"
+        ) from err
+
+    fig, (ax_tr, ax_sp, ax_res) = plt.subplots(
+        1, 3, figsize=(15, 4), width_ratios=(1.2, 1, 1.4), constrained_layout=True
+    )
+    wl = np.asarray(dataset.wavelength)
+    mask = np.asarray(dataset.mask)
+    time = np.asarray(dataset.time)
+    absorbance = np.asarray(dataset.absorbance)
+    residuals = np.asarray(fit.residuals)
+
+    for j, target in enumerate(wavelengths):
+        i = int(np.argmin(np.abs(wl - target)))
+        for r in range(dataset.n_run):
+            m = mask[r]
+            ax_tr.plot(
+                time[r, m],
+                absorbance[r, m, i],
+                "o",
+                ms=2.5,
+                mec="none",
+                alpha=0.45,
+                color=_CATEGORICAL[j],
+                label=f"{wl[i]:.0f} {dataset.wavelength_unit}" if r == 0 else None,
+            )
+            ax_tr.plot(time[r, m], absorbance[r, m, i] - residuals[r, m, i], color=_INK, lw=1)
+    ax_tr.set(
+        xlabel=f"time ({dataset.time_unit})",
+        ylabel="absorbance",
+        title="data and model\ndots: data, lines: fitted model, runs overlaid",
+    )
+    ax_tr.legend(frameon=False, fontsize=8)
+
+    spectra = np.asarray(fit.spectra)
+    for s, name in enumerate(fit.species):
+        for r in range(dataset.n_run):
+            ax_sp.plot(wl, spectra[r, s], color=_SPECIES[s], lw=0.8, alpha=0.5)
+        ax_sp.plot(wl, spectra[:, s].mean(axis=0), color=_SPECIES[s], lw=2, label=name)
+    ax_sp.set(
+        xlabel=f"wavelength ({dataset.wavelength_unit})",
+        ylabel=f"absorbance per {dataset.concentration_unit}",
+        title="species spectra\nthin: each run, thick: mean over runs",
+    )
+    ax_sp.legend(frameon=False, fontsize=8)
+
+    scaled = residuals / np.asarray(fit.sigma)[:, None, :]
+    stacked = np.concatenate([scaled[r, mask[r]] for r in range(dataset.n_run)])
+    boundaries = np.cumsum(mask.sum(axis=1))[:-1]
+    image = ax_res.imshow(
+        stacked,
+        aspect="auto",
+        cmap=LinearSegmentedColormap.from_list("residual", _DIVERGING),
+        vmin=-3,
+        vmax=3,
+        extent=(wl[0], wl[-1], stacked.shape[0] - 0.5, -0.5),
+        interpolation="nearest",
+    )
+    for boundary in boundaries:
+        ax_res.axhline(boundary - 0.5, color=_INK, lw=0.8)
+    fig.colorbar(image, ax=ax_res, label="residual / noise level")
+    ax_res.set(
+        xlabel=f"wavelength ({dataset.wavelength_unit})",
+        ylabel="timepoint (runs stacked)",
+        title="what is left, per noise level\neven static: noise; stripes or blocks: misfit",
+    )
+
+    for ax in (ax_tr, ax_sp, ax_res):
         title = ax.get_title()
         ax.set_title("")
         ax.set_title(title, loc="left", fontsize=9.5)

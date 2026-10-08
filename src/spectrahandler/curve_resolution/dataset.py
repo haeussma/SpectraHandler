@@ -5,9 +5,12 @@ Dense arrays with leading batch axes, validated once at construction. See
 ordered ``(run, time, wavelength)`` and why species are sorted alphabetically.
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import jax.numpy as jnp
+import numpy as np
+import numpy.typing as npt
 from jax import Array
 
 __all__ = ["SpectralDataset"]
@@ -37,6 +40,8 @@ class SpectralDataset:
             shape ``(n_species,)``, same units. Finite and positive wherever the row is
             finite; ignored where it is ``NaN``.
         run_ids: One identifier per run.
+        conditions: One condition label per run. Runs that share a label are replicates
+            of one condition and are pooled when results are summarised.
         time_unit: Unit string for ``time``, e.g. ``"h"``.
         wavelength_unit: Unit string for ``wavelength``, e.g. ``"nm"``.
         concentration_unit: Unit string for concentrations, e.g. ``"uM"``.
@@ -51,6 +56,7 @@ class SpectralDataset:
     reference_spectra: Array
     reference_sigma: Array
     run_ids: tuple[str, ...]
+    conditions: tuple[str, ...]
     time_unit: str
     wavelength_unit: str
     concentration_unit: str
@@ -92,6 +98,7 @@ class SpectralDataset:
         mask: Array | None = None,
         reference_spectra: Array | None = None,
         reference_sigma: Array | None = None,
+        conditions: Sequence[str] | None = None,
         time_unit: str = "h",
         wavelength_unit: str = "nm",
         concentration_unit: str = "uM",
@@ -114,6 +121,8 @@ class SpectralDataset:
                 all ``NaN`` rule: see the class docstring.
             reference_sigma: Shape ``(n_species,)``. Defaults to all ``NaN``. Units and
                 when it must be finite and positive: see the class docstring.
+            conditions: One label per run. Defaults to ``"all"`` for every run, so all runs
+                are replicates of one condition.
             time_unit: Unit of ``time``.
             wavelength_unit: Unit of ``wavelength``.
             concentration_unit: Unit of concentrations.
@@ -124,6 +133,8 @@ class SpectralDataset:
         Raises:
             ValueError: If any contract in the class docstring is violated.
         """
+        if isinstance(conditions, str):
+            raise ValueError("conditions must be a sequence of labels, one per run, not a string")
         # Duplicates are not rejected here: sorting is well-defined even with ties,
         # and __post_init__'s _validate is the single source of truth for uniqueness.
         order = sorted(range(len(species)), key=lambda i: species[i])
@@ -150,6 +161,95 @@ class SpectralDataset:
             reference_spectra=refs,
             reference_sigma=ref_sigma,
             run_ids=tuple(run_ids),
+            conditions=("all",) * len(run_ids) if conditions is None else tuple(conditions),
+            time_unit=time_unit,
+            wavelength_unit=wavelength_unit,
+            concentration_unit=concentration_unit,
+        )
+
+    @classmethod
+    def from_runs(
+        cls,
+        runs: Sequence[tuple[npt.ArrayLike, npt.ArrayLike]],
+        *,
+        wavelength: npt.ArrayLike,
+        species: tuple[str, ...],
+        initial_state: Mapping[str, float] | Sequence[Mapping[str, float]],
+        run_ids: Sequence[str],
+        conditions: Sequence[str] | None = None,
+        time_unit: str = "h",
+        wavelength_unit: str = "nm",
+        concentration_unit: str = "uM",
+    ) -> "SpectralDataset":
+        """Stack runs of different lengths into one dataset, padding with a mask.
+
+        Shorter runs are padded at the end: absorbance ``NaN``, time repeated, mask
+        ``False``. Nothing is truncated or interpolated.
+
+        Args:
+            runs: One ``(time, absorbance)`` pair per run; ``time`` has shape ``(n_t,)``
+                and ``absorbance`` shape ``(n_t, n_wavelength)``. ``n_t`` may differ.
+            wavelength: Shared grid, shape ``(n_wavelength,)``, strictly increasing.
+            species: Species names, any order.
+            initial_state: Initial concentration per species name, one mapping for all
+                runs or one per run. Species left out start at 0.
+            run_ids: One identifier per run.
+            conditions: One label per run; defaults to ``"all"`` for every run.
+            time_unit: Unit of ``time``.
+            wavelength_unit: Unit of ``wavelength``.
+            concentration_unit: Unit of concentrations.
+
+        Returns:
+            A validated dataset.
+
+        Raises:
+            ValueError: If a run's shapes disagree, a mapping names an unknown species,
+                the number of mappings is not one per run, or any dataset contract fails.
+        """
+        if not runs:
+            raise ValueError("runs must be non-empty")
+        grid = np.asarray(wavelength, dtype=float)
+        times = [np.asarray(t, dtype=float) for t, _ in runs]
+        values = [np.asarray(a, dtype=float) for _, a in runs]
+        for r, (t, a) in enumerate(zip(times, values, strict=True)):
+            if t.ndim != 1 or a.shape != (t.shape[0], grid.shape[0]):
+                raise ValueError(
+                    f"run {r}: absorbance shape {a.shape} does not match "
+                    f"(len(time), len(wavelength)) = ({t.shape[0]}, {grid.shape[0]})"
+                )
+        n_time = max(t.shape[0] for t in times)
+        absorbance = np.full((len(runs), n_time, grid.shape[0]), np.nan)
+        time = np.zeros((len(runs), n_time))
+        mask = np.zeros((len(runs), n_time), dtype=bool)
+        for r, (t, a) in enumerate(zip(times, values, strict=True)):  # IO boundary
+            absorbance[r, : t.shape[0]] = a
+            time[r, : t.shape[0]] = t
+            time[r, t.shape[0] :] = t[-1]
+            mask[r, : t.shape[0]] = True
+
+        states = (
+            [initial_state] * len(runs)
+            if isinstance(initial_state, Mapping)
+            else list(initial_state)
+        )
+        if len(states) != len(runs):
+            raise ValueError(f"initial_state has {len(states)} mappings for {len(runs)} runs")
+        unknown = sorted({name for state in states for name in state} - set(species))
+        if unknown:
+            raise ValueError(
+                f"initial_state names unknown species {unknown}; species are {species}"
+            )
+        initial = np.array([[float(state.get(name, 0.0)) for name in species] for state in states])
+
+        return cls.create(
+            absorbance=jnp.asarray(absorbance),
+            time=jnp.asarray(time),
+            wavelength=jnp.asarray(grid),
+            species=tuple(species),
+            initial_state=jnp.asarray(initial),
+            run_ids=tuple(run_ids),
+            mask=jnp.asarray(mask),
+            conditions=conditions,
             time_unit=time_unit,
             wavelength_unit=wavelength_unit,
             concentration_unit=concentration_unit,
@@ -179,6 +279,10 @@ def _validate(ds: SpectralDataset) -> None:
             raise ValueError(f"{field} shape {got} does not match expected {want}")
     if len(ds.run_ids) != n_run:
         raise ValueError(f"run_ids has {len(ds.run_ids)} entries for {n_run} runs")
+    if len(ds.conditions) != n_run:
+        raise ValueError(f"conditions has {len(ds.conditions)} entries for {n_run} runs")
+    if not all(isinstance(c, str) and c for c in ds.conditions):
+        raise ValueError(f"conditions must be non-empty strings, got {ds.conditions!r}")
 
     if not bool(jnp.all(jnp.diff(ds.wavelength) > 0)):
         raise ValueError("wavelength must be strictly increasing")

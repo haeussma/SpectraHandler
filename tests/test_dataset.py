@@ -64,6 +64,9 @@ def test_time_ignores_order_of_masked_out_points() -> None:
         ({"species": ("a", "a")}, "unique"),
         ({"species": ()}, "non-empty"),
         ({"run_ids": ("r0", "r1")}, "run_ids"),
+        ({"conditions": ("a", "b")}, "conditions"),
+        ({"conditions": ("",)}, "non-empty strings"),
+        ({"conditions": "a"}, "not a string"),
         ({"absorbance": jnp.zeros((1, 3, 5))}, "shape"),
         ({"mask": jnp.zeros((1, 3), dtype=bool)}, "at least one"),
         # Strictly increasing but not finite: must hit the finiteness check, not the
@@ -120,7 +123,67 @@ def test_direct_construction_rejects_unsorted_species() -> None:
             reference_spectra=jnp.full((2, 4), jnp.nan),
             reference_sigma=jnp.full((2,), jnp.nan),
             run_ids=("r0",),
+            conditions=("all",),
             time_unit="h",
             wavelength_unit="nm",
             concentration_unit="uM",
         )
+
+
+def test_conditions_default_to_one_condition() -> None:
+    assert _minimal().conditions == ("all",)
+
+
+def test_from_runs_pads_shorter_runs_with_a_mask() -> None:
+    ds = SpectralDataset.from_runs(
+        [
+            (np.array([0.0, 1.0, 2.0]), np.ones((3, 4))),
+            (np.array([0.0, 0.5]), 2 * np.ones((2, 4))),
+        ],
+        wavelength=np.arange(4.0),
+        species=("b", "a"),
+        initial_state={"a": 5.0},
+        run_ids=["r0", "r1"],
+        conditions=["x", "x"],
+        time_unit="s",
+    )
+    assert (ds.n_run, ds.n_time, ds.n_wavelength) == (2, 3, 4)
+    np.testing.assert_array_equal(ds.mask, [[True, True, True], [True, True, False]])
+    assert bool(jnp.isnan(ds.absorbance[1, 2]).all())
+    np.testing.assert_array_equal(ds.time[1], [0.0, 0.5, 0.5])
+    np.testing.assert_array_equal(ds.initial_state, [[5.0, 0.0], [5.0, 0.0]])
+    assert ds.conditions == ("x", "x")
+    assert ds.time_unit == "s"
+
+
+def test_from_runs_accepts_one_initial_state_per_run() -> None:
+    ds = SpectralDataset.from_runs(
+        [(np.arange(2.0), np.zeros((2, 3))), (np.arange(2.0), np.zeros((2, 3)))],
+        wavelength=np.arange(3.0),
+        species=("a",),
+        initial_state=[{"a": 1.0}, {"a": 2.0}],
+        run_ids=["r0", "r1"],
+    )
+    np.testing.assert_array_equal(ds.initial_state, [[1.0], [2.0]])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"runs": [(np.arange(2.0), np.zeros((3, 3)))]}, "does not match"),
+        ({"initial_state": {"z": 1.0}}, "unknown species"),
+        ({"initial_state": [{"a": 1.0}, {"a": 1.0}]}, "mappings for 1 runs"),
+        ({"runs": []}, "non-empty"),
+    ],
+)
+def test_from_runs_rejects(kwargs: dict[str, object], message: str) -> None:
+    arguments: dict[str, object] = {
+        "runs": [(np.arange(2.0), np.zeros((2, 3)))],
+        "wavelength": np.arange(3.0),
+        "species": ("a",),
+        "initial_state": {"a": 1.0},
+        "run_ids": ["r0"],
+    }
+    arguments.update(kwargs)
+    with pytest.raises(ValueError, match=message):
+        SpectralDataset.from_runs(**arguments)  # ty: ignore[invalid-argument-type]
