@@ -33,8 +33,8 @@ your data can and cannot tell you, provided that:
 
 - the number of species you give is right,
 - the noise is independent from point to point, with one level per wavelength,
-- the absorbance is concentrations times spectra and nothing else (no baseline or
-  offset), and
+- the absorbance is concentrations times spectra, plus only the backgrounds you name
+  (see [Baselines and backgrounds](#baselines-and-backgrounds)), and
 - closure holds as given.
 
 The splits are explored by a random walk (hit-and-run), so the band is an inner
@@ -115,6 +115,8 @@ from). The whole call takes about 8 s on a laptop.
 | `level` | The credibility level of the band, 0.95 by default |
 | `n_free` | How many numbers the data leave undetermined |
 | `r_hat` | Agreement between the sampling chains of step 1; close to 1 is good, and above 1.05 you get a warning |
+| `background_names`, `background_amplitude` | The backgrounds that were subtracted and their amounts per run, in absorbance units |
+| `baseline_tolerance`, `zero_source` | By how much zero absorbance may be off at each wavelength, and where zero came from |
 
 Species **without** a reference are resolved only up to relabelling among themselves:
 the band for "b" may be the spectrum you know as "c". Give a reference, or a run where
@@ -166,6 +168,68 @@ What to do with what you see:
   from the data is far too low; pass `sigma` measured along time on a stretch where
   nothing reacts.
 
+## Baselines and backgrounds
+
+Real spectra are rarely concentrations times spectra and nothing else. A cuvette sits a
+little differently in every run, a lamp drifts, and the whole spectrum is shifted or
+tilted by a few thousandths of an absorbance unit.
+
+A baseline with a free shape cannot be separated from the species spectra: any part of
+it can be moved into the spectra without changing the fit. What can be separated is a
+background with a **known shape**, if you can name a wavelength range where **no species
+absorbs**, a zero window. There the data hold only background and noise, so the amount of
+each background is measured there, and the known shape carries it across the rest of the
+spectrum.
+
+```python
+import dataclasses
+
+from spectrahandler.curve_resolution import Background
+
+# The same data, with everything 0.005 AU too high.
+shifted = dataclasses.replace(data, absorbance=data.absorbance + 0.005)
+
+band = resolve_band(
+    shifted,
+    jax.random.key(1),
+    backgrounds=(Background.offset(),),
+    zero_windows=((660.0, 700.0),),  # nm; no species of this example absorbs here
+)
+
+print(band.zero_source)
+print(f"offset {float(band.background_amplitude[0, 0]):.4f} AU")
+print(f"tolerance {float(band.baseline_tolerance[-1]):.4f} AU in the window")
+print(f"tolerance {float(band.baseline_tolerance[0]):.4f} AU outside")
+```
+
+This recovers the offset as 0.0050 AU. The **baseline tolerance** is what the backgrounds
+could not explain inside the window: here 0.0011 AU, which is just noise. Outside the
+window it is 0.0021 AU. The band uses it in two ways: a spectrum may dip below zero by
+the tolerance (per unit concentration), and the spectrum band is widened by the same
+amount.
+
+- **Backgrounds provided:** `Background.offset()` (flat) and `Background.tilt()` (a
+  straight line). Any other known shape is `Background(name, shape)`, with `shape` a
+  function of the wavelength grid. Each gets one amount per run.
+- **The window is an assumption, and the tolerance tests it.** A species that absorbs
+  weakly inside the window raises the tolerance by about its absorbance. A tolerance
+  comparable to your signal means the window is not empty.
+- **A tilt needs a wide window.** A line fitted over 40 nm and extended over 300 nm
+  multiplies every small error. The tolerance outside the window grows accordingly
+  (one plus the leverage of the fit, a worst case), and with a narrow window and
+  several runs the fit can fail with "no feasible split". Use an offset alone when the
+  window is narrow.
+- **A blank gives a tighter tolerance.** A buffer blank has no absorber anywhere. Put it
+  through `fit_backgrounds` with the same backgrounds and window; what it leaves outside
+  the window is the real baseline error there. Pass that as `baseline_tolerance`, one
+  value per wavelength, and it replaces the worst case.
+- **Reference spectra must be baseline-free.** A blank used as a reference has its own
+  baseline: correct it with `fit_backgrounds` first.
+- **Without backgrounds, a baseline problem can hide in the noise.** With several runs
+  whose baselines differ, the model explains the mismatch as noise and still returns a
+  band, which is then wrong. An inferred `sigma` well above what your instrument
+  delivers is the sign.
+
 ## Tuning
 
 `resolve_band` exposes its knobs with defaults that worked on synthetic data:
@@ -176,13 +240,15 @@ What to do with what you see:
   one.
 - `noise_scale`: the scale of the prior on the inferred noise levels. The default is
   the RMS absorbance, which leaves the data to decide.
+- `backgrounds`, `zero_windows`, `baseline_tolerance`, `baseline_smoothing`: see
+  [Baselines and backgrounds](#baselines-and-backgrounds).
 - `num_warmup`, `num_samples`, `num_chains`, `target_accept_prob`: the NUTS sampler of
   step 1. Raise the first two if you get the R-hat warning.
 - `n_iter`, `n_burn`, `thin`: length of the walk over the feasible region.
 - `n_als`, `n_restart`, `n_search`: the search for a first split that fits.
 
 Current limits: every run must be fully measured, the number of species is given, and
-there is no baseline or background term yet.
+a background has one amount per run, constant in time.
 
 ## Reading JASCO exports
 

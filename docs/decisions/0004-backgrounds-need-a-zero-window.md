@@ -123,3 +123,51 @@ The hand-tuned version (line baseline at t ≈ 0, guessed δ = 0.003) gave 5.04�
   `zero_windows` name leaves room for them.
 - **Assumes** backgrounds are linear in amplitude and that their shapes are linearly
   independent inside `W`. The library checks the second and raises.
+
+## Amendment, 2026-11-19: built on the credible band of ADR 0007
+
+Implemented in `background.py` and `resolve_band`. Three things differ from the Decision
+above, each because of something measured while building it.
+
+1. **δ does not bound the baseline error outside the window.** Decision 4 treats δ as the
+   error everywhere. A leftover of size δ inside the window biases the fitted amplitudes,
+   and the shapes carry that bias outwards; for a tilt it grows with the distance.
+   On synthetic data with a 40 nm window, a fixed 0.002 AU wiggle and offset + tilt per
+   run, δ was 0.003 AU while the baseline left outside the window reached 0.018 AU.
+   The tolerance is therefore δ inside the window and `δ·(1 + leverage(λ))` outside, with
+   the leverage the absolute row sum of the least-squares map from window data to the
+   background at λ. That is a worst case: 2 δ for an offset, 4–5 δ at 364–439 nm for
+   offset + tilt on EXP0001.
+2. **The worst case can be replaced by a measurement.** `baseline_tolerance` also takes
+   one value per wavelength, used as given. On EXP0001 the buffer blank, which has no
+   absorber, leaves 1.4× its in-window tolerance outside the window after the same fit.
+3. **δ also widens the spectrum band**, by δ/N on both sides, and not only the
+   non-negativity test: a baseline error constant in time is absorbed into the species
+   spectra as error/N, so the truth lies that far from the resolved spectrum.
+
+Not built in this pass: `per_time` amplitudes, the scattering and measured shapes (any
+shape can be given as a callable), and `noise_by_wavelength` (the noise per wavelength is
+inferred by the model since ADR 0007).
+
+**A narrow window cannot pin a tilt per run.** With 11 window channels over 40 nm and 30
+spectra, noise alone gives the tilt a standard error of 0.003 AU across the grid, different
+in every run, so the runs no longer share one set of spectra and no split is feasible. The
+synthetic gate uses offsets only. Fitting the baselines of the runs relative to each other
+inside the model, from the whole spectrum, would remove this limit; it belongs with the
+kinetic stage.
+
+**Without backgrounds, a baseline mismatch between runs is absorbed as noise.** Since
+ADR 0007 infers the noise, EXP0001 without baseline handling no longer fails: it returns a
+band with a median inferred noise of 0.0022 AU against 0.0008 AU with backgrounds. The
+inflated noise is the only sign.
+
+EXP0001 with the credible band (three 1 s shots, offset + tilt per run, window 520–694.5 nm,
+δ = 0.0040 AU measured, R-hat 1.005):
+
+| | worst-case tolerance | tolerance calibrated on the buffer blank | prototype above | Fraaije 1997 |
+|---|---|---|---|---|
+| converted at 1 s (µM), three shots | 4.4–6.9 | 4.9–6.9 | 5.16–7.02 | — |
+| ε364 of the intermediate (mM⁻¹ cm⁻¹) | 41.5–64.1 | 43.7–57.1 | 43.7–54.6 | 46 |
+| ε439 of the oxidised enzyme | 10.4–15.1 | 11.9–13.6 | 12.4–12.5 | 12.5 |
+
+The shots agree within 0.1 µM in both runs.

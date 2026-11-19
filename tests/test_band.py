@@ -170,7 +170,7 @@ def test_result_does_not_depend_on_units() -> None:
     """
     data, spectra, _ = make_realistic_dataset(jax.random.key(0))
     data = _with_reference(data, spectra[0])
-    kwargs = {"n_iter": 300, "n_burn": 100}
+    kwargs: dict[str, Any] = {"n_iter": 300, "n_burn": 100}
     ref = resolve_band(data, jax.random.key(1), **kwargs)
 
     def rescaled(c: float, a: float) -> CredibleBand:
