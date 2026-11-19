@@ -116,9 +116,9 @@ def make_realistic_dataset(
     Same a -> b -> c time course as :func:`make_easy_dataset`, but species a and c have
     two bands each (a strong near-UV band and a weaker visible one) and b has one, the
     absorbance peaks near 0.33 AU, and the signal is about 160 times the noise. The noise
-    is one Gaussian standard deviation shared by every channel and timepoint, which is
-    exactly what resolve_band assumes. Spectra of a and c overlap, so some rotational
-    ambiguity is expected here and a wide band is not by itself a fault.
+    is one Gaussian standard deviation shared by every channel and timepoint, a special
+    case of the one-per-wavelength noise resolve_band infers. Spectra of a and c overlap,
+    so some rotational ambiguity is expected here and a wide band is not by itself a fault.
 
     Args:
         key: PRNG key for the noise draw.

@@ -13,7 +13,7 @@ its own three-panel figure over all runs. No function sets a title.
 | Function | Draws | Takes |
 | --- | --- | --- |
 | `plot_spectra` | every measured spectrum of a run, coloured by time | any dataset |
-| `plot_deconvolution` | concentrations over time and species spectra | a `KineticFit` or a `FeasibleBand` |
+| `plot_deconvolution` | concentrations over time and species spectra | a `KineticFit` or a `CredibleBand` |
 | `plot_residuals` | the residual map and the misfit of every spectrum | a `KineticFit` |
 | `plot_rate_posterior` | each run's rate and the pooled posterior of a condition | a `KineticFit` |
 | `plot_noise` | singular values, residual and autocorrelation over all runs | `noise_diagnostics` |

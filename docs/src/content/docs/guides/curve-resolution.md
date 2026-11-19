@@ -17,25 +17,33 @@ match, reproduces the data exactly, and both spectra stay smooth and positive. N
 amount of repeating the same measurement removes this; it is a property of the
 experiment, not of the noise.
 
-SpectraHandler therefore reports the **band**: for every concentration and every
-spectrum value, the range over all splits that fit the data, widened by the
-measurement noise. Its width is an honest statement of what your data can and cannot
-tell you, provided that:
+SpectraHandler therefore reports a **credible band**, built in two steps that keep
+apart what the data determine and what they do not:
+
+1. **What the data determine.** The product, and the noise level at every wavelength,
+   get a Bayesian posterior (sampled with NumPyro). This is where the measurement
+   noise enters.
+2. **What they do not.** The split gets no prior at all. Every split that keeps
+   concentrations and spectra non-negative is kept, where "non-negative" means: not
+   below zero by more than the posterior of step 1 can explain.
+
+The band is, for every concentration and every spectrum value, the range of its 95 %
+posterior interval over all those splits. Its width is an honest statement of what
+your data can and cannot tell you, provided that:
 
 - the number of species you give is right,
-- the noise is white and one level everywhere,
+- the noise is independent from point to point, with one level per wavelength,
 - the absorbance is concentrations times spectra and nothing else (no baseline or
   offset), and
 - closure holds as given.
 
-The range is explored by a random walk over the splits (hit-and-run), so the band is
-an inner approximation that can fall slightly short of the true extremes, and the
-noise margin is a linearised estimate. On every synthetic test the band
-contained the true profiles and spectra.
+The splits are explored by a random walk (hit-and-run), so the band is an inner
+approximation that can fall slightly short of the true extremes. On the synthetic
+tests the band contained at least 95 % of the true amounts and spectrum values.
 
-Methods that return a single split (classic MCR-ALS, NMF), or a narrow Bayesian
-posterior under a convenient prior, pick one point inside that band without telling
-you that they did.
+Methods that return a single split (classic MCR-ALS, NMF), or one Bayesian posterior
+under a prior on the spectra, pick one point or one narrow region inside that band
+without telling you that they did.
 
 ## What narrows the band
 
@@ -81,7 +89,8 @@ data = SpectralDataset.create(
 
 band = resolve_band(data, jax.random.key(1))
 
-print(f"{band.n_free} free re-mixing numbers, noise {band.sigma:.4f} AU")
+print(f"{band.n_free} free re-mixing numbers, R-hat {band.r_hat:.3f}")
+print(f"noise {float(band.sigma.min()):.4f} - {float(band.sigma.max()):.4f} AU")
 
 # Only "a" has a reference, so only its name is pinned: the columns for "b" and "c"
 # may come back swapped (see below).
@@ -89,8 +98,10 @@ lo, hi = band.concentration_lower[0, 10, 0], band.concentration_upper[0, 10, 0]
 print(f"a at t = {float(data.time[0, 10]):.1f} h: {float(lo):.2f} - {float(hi):.2f} uM")
 ```
 
-On this data species `a` at 3.4 h comes out between about 0.05 and 2.18 µM; the true
-value is 1.58 µM.
+On this data species `a` at 3.4 h comes out between about 0.05 and 2.16 µM; the true
+value is 1.58 µM. The noise comes out between 0.0015 and 0.0028 AU per wavelength (the
+true value is 0.002 everywhere; each wavelength has only 30 spectra to estimate it
+from). The whole call takes about 8 s on a laptop.
 
 ## Reading the result
 
@@ -98,9 +109,12 @@ value is 1.58 µM.
 | --- | --- |
 | `concentration_lower`, `concentration_upper` | The band for every amount, in your concentration unit |
 | `spectra_lower`, `spectra_upper` | The band for every spectrum value, in absorbance per concentration unit. The run axis has size 1: all runs share one set of spectra |
-| `concentration_ambiguity`, `spectra_ambiguity` | The same extremes without the noise margin: the rotational ambiguity, still including the small noise slack allowed below zero |
+| `concentration_ambiguity`, `spectra_ambiguity` | The same extremes for the posterior mean alone: the rotational ambiguity without the noise part, still including the small tolerance below zero |
 | `concentration_draws`, `spectra_draws` | Draws spread evenly over all splits that fit, with noise. A *typical-solution* summary under a stated flat prior, not a calibrated interval |
+| `sigma`, `sigma_draws` | The noise standard deviation at every wavelength: posterior mean and posterior draws, in absorbance units |
+| `level` | The credibility level of the band, 0.95 by default |
 | `n_free` | How many numbers the data leave undetermined |
+| `r_hat` | Agreement between the sampling chains of step 1; close to 1 is good, and above 1.05 you get a warning |
 
 Species **without** a reference are resolved only up to relabelling among themselves:
 the band for "b" may be the spectrum you know as "c". Give a reference, or a run where
@@ -147,23 +161,28 @@ What to do with what you see:
 - **More components above the edge than species:** an unmodelled species, a baseline,
   or a per-run offset. Each is one more component; the band assumes there are none.
 - **Autocorrelation near 1 along wavelength:** the export was smoothed or interpolated
-  along wavelength, as JASCO interval scans are. The noise level estimated from the
-  data is then far too low; pass `sigma` measured along time on a stretch where
+  along wavelength, as JASCO interval scans are. Neighbouring points then share their
+  noise, which breaks the independence the band assumes, and the noise level inferred
+  from the data is far too low; pass `sigma` measured along time on a stretch where
   nothing reacts.
 
 ## Tuning
 
 `resolve_band` exposes its knobs with defaults that worked on synthetic data:
 
-- `sigma`: the noise level. By default it is estimated from the data; pass a value
-  measured on a blank if you have one.
-- `z_slack`: how many noise standard deviations a value may dip below zero and still
-  count as non-negative, and the width of the noise margin. Default 3.5.
+- `level`: the credibility level of the band. Default 0.95.
+- `sigma`: the noise level, one number or one per wavelength. By default one per
+  wavelength is inferred from the data; pass a value measured on a blank if you have
+  one.
+- `noise_scale`: the scale of the prior on the inferred noise levels. The default is
+  the RMS absorbance, which leaves the data to decide.
+- `num_warmup`, `num_samples`, `num_chains`, `target_accept_prob`: the NUTS sampler of
+  step 1. Raise the first two if you get the R-hat warning.
 - `n_iter`, `n_burn`, `thin`: length of the walk over the feasible region.
 - `n_als`, `n_restart`, `n_search`: the search for a first split that fits.
 
 Current limits: every run must be fully measured, the number of species is given, and
-the noise is assumed to be one level everywhere.
+there is no baseline or background term yet.
 
 ## Reading JASCO exports
 

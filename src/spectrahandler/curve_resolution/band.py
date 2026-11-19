@@ -1,63 +1,86 @@
-"""Feasible-band curve resolution.
+"""Credible-band curve resolution.
 
-The data fix the product ``C @ S`` but not its split into ``C`` and ``S``. Every split is
-a re-mixing ``C = X @ T``, ``S = inv(T) @ Y`` of the data's own rank-K patterns. Closure
-and references pin some entries of ``T``; non-negativity bounds the rest to a feasible
-region. This module reports that region's projection onto every concentration and
-spectrum value -- the band -- plus a noise margin, and flat draws over the region as a
-labelled typical-solution summary. The band is not a posterior: the data do not determine a
-prior over the split.
+The data fix the product ``C @ S`` but not its split into ``C`` and ``S``. The work is done
+in two stages that keep the two apart:
+
+1. **What the data identify.** A NumPyro posterior of the rank-K product ``X @ Y`` and of one
+   noise standard deviation per wavelength, with independent normal noise. ``X`` and ``Y``
+   are held in a fixed gauge, so this posterior has one mode and is close to normal.
+2. **What they do not.** Every split is a re-mixing ``C = X @ T``, ``S = inv(T) @ Y``.
+   Closure and references pin some entries of ``T``; non-negativity bounds the rest to a
+   feasible region. No prior is put on ``T``.
+
+A re-mixing is feasible unless it makes some value negative beyond what the posterior of
+stage 1 allows. The band is the range, over the whole feasible region, of the posterior
+interval of every concentration and spectrum value. Flat draws over the region are a
+labelled typical-solution summary, not the result. See ADR 0007.
 """
 
 import math
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpyro
+import numpyro.distributions as dist
 from jax import Array
+from jax.scipy.stats import norm
+from numpyro.diagnostics import split_gelman_rubin
+from numpyro.distributions import constraints
+from numpyro.infer import MCMC, NUTS, init_to_value
 
 from spectrahandler.curve_resolution.dataset import SpectralDataset
 
-__all__ = ["FeasibleBand", "resolve_band"]
+__all__ = ["CredibleBand", "resolve_band"]
 
-#: theta -> (concentrations, spectra, concentration noise sd, spectra noise sd).
+#: theta -> (concentrations, spectra, concentration posterior sd, spectra posterior sd).
 type _Parts = Callable[[Array], tuple[Array, Array, Array, Array]]
-#: theta -> summed non-negativity violation in noise sd; zero means feasible.
+#: theta -> summed non-negativity violation in posterior sd; zero means feasible.
 type _Violation = Callable[[Array], Array]
 type _State = tuple[Array, Array, Array, Array, Array]
 
 #: Search and edge lengths are fractions of tau = |t_particular|, the scale of T. The step,
 #: spread, floor, cap and determinant constants below are absolute values at the reference
-#: scale tau = 16 (typical for concentrations in uM and absorbance in AU), and are rescaled
-#: by tau / 16.
+#: scale tau = 16, and are rescaled by tau / 16.
 _TAU_REFERENCE = 16.0
+
+#: Above this split R-hat the posterior of the identified part is reported as not converged.
+_R_HAT_WARN = 1.05
 
 
 @dataclass(frozen=True, eq=False)
-class FeasibleBand:
+class CredibleBand:
     """Everything the data allow, for every concentration and spectrum value.
 
     Attributes:
-        concentration_lower: Band lower edge incl. noise margin, clipped at zero, shape
+        concentration_lower: Band lower edge, clipped at zero, shape
             ``(n_run, n_time, n_species)``, in ``concentration_unit``.
-        concentration_upper: Band upper edge incl. noise margin, same shape and unit.
-        spectra_lower: Band lower edge incl. noise margin, clipped at zero, shape
+        concentration_upper: Band upper edge, same shape and unit.
+        spectra_lower: Band lower edge, clipped at zero, shape
             ``(1, n_species, n_wavelength)``, in absorbance per ``concentration_unit``.
             The run axis has size 1: all runs are resolved with one set of spectra, and
             it broadcasts against per-run arrays.
-        spectra_upper: Band upper edge incl. noise margin, same shape and unit.
-        concentration_ambiguity: Extremes over the feasible region without the noise
-            margin, shape ``(2, n_run, n_time, n_species)``: the rotational ambiguity.
-            The region's non-negativity is tested at ``-z_slack`` noise sd, so these
-            extremes still carry that noise-dependent slack and may dip below zero.
+        spectra_upper: Band upper edge, same shape and unit.
+        concentration_ambiguity: Extremes of the posterior mean over the feasible region,
+            shape ``(2, n_run, n_time, n_species)``: the rotational ambiguity without the
+            noise part. The region tolerates values slightly below zero, so these extremes
+            may dip below zero.
         spectra_ambiguity: Same, shape ``(2, 1, n_species, n_wavelength)``.
-        concentration_draws: Flat draws over the region plus propagated noise, shape
+        concentration_draws: Flat draws over the region plus posterior noise, shape
             ``(n_draw, n_run, n_time, n_species)``. A typical-solution summary under an
             explicit flat prior on the free re-mixing numbers, not a calibrated interval.
         spectra_draws: Same, shape ``(n_draw, 1, n_species, n_wavelength)``.
-        sigma: Noise standard deviation used, in absorbance units.
+        sigma: Posterior mean of the noise standard deviation per wavelength, shape
+            ``(n_wavelength,)``, in absorbance units.
+        sigma_draws: Posterior draws of the same, shape ``(n_sample, n_wavelength)``. One
+            repeated row if ``sigma`` was given.
+        level: Credibility level of the band.
         n_free: Free re-mixing numbers left after closure and references.
+        r_hat: Largest split R-hat over the identified part; close to 1 when the chains
+            agree.
     """
 
     concentration_lower: Array
@@ -68,55 +91,176 @@ class FeasibleBand:
     spectra_ambiguity: Array
     concentration_draws: Array
     spectra_draws: Array
-    sigma: float
+    sigma: Array
+    sigma_draws: Array
+    level: float
     n_free: int
+    r_hat: float
 
 
-def _estimate_sigma(matrix: Array, rank: int) -> float:
-    """Noise standard deviation from the residual after a rank-``rank`` SVD.
+class _Identified(NamedTuple):
+    """Posterior draws of what the data identify, chains merged."""
+
+    x: Array  # (n_sample, n_row, n_species): row coordinates of the time course
+    x_ref: Array  # (n_sample, n_ref, n_species): row coordinates of the references
+    y: Array  # (n_sample, n_species, n_wavelength): spectral patterns
+    sigma: Array  # (n_sample, n_wavelength): noise sd per wavelength
+    r_hat: float
+
+
+def _sample_identified(
+    time_course: Array,
+    ref_rows: Array,
+    ref_sd: Array,
+    k: int,
+    key: Array,
+    *,
+    sigma: Array | None,
+    noise_scale: float,
+    num_warmup: int,
+    num_samples: int,
+    num_chains: int,
+    target_accept_prob: float,
+) -> _Identified:
+    """Posterior of the rank-``k`` product and the noise per wavelength, in a fixed gauge.
+
+    The model is ``time_course ~ Normal(X @ Y, sigma)`` with independent noise and one
+    ``sigma`` per wavelength; each reference row is ``Normal(x_ref @ Y, ref_sd)``. The gauge
+    is ``Y = (y0 + B @ y_perp) * sigma0``: ``y0`` holds the leading right singular vectors
+    of the noise-scaled data, ``y_perp`` their complement. Every rank-``k`` matrix near the
+    data has exactly one such factorisation, so ``X``, ``B`` and ``sigma`` are identified.
+    Priors: flat on ``X``, ``B`` and ``x_ref``; half-normal on ``sigma``.
 
     Args:
-        matrix: Data, shape ``(n_row, n_col)``.
-        rank: Number of components kept.
+        time_course: Data, shape ``(n_row, n_wavelength)``.
+        ref_rows: Reference spectra, shape ``(n_ref, n_wavelength)``; ``n_ref`` may be 0.
+        ref_sd: Noise sd of each reference row, shape ``(n_ref,)``.
+        k: Rank, the number of species.
+        key: PRNG key for NUTS.
+        sigma: Known noise sd per wavelength, shape ``(n_wavelength,)``; ``None`` samples it.
+        noise_scale: Scale of the half-normal prior on ``sigma``.
+        num_warmup: NUTS warmup steps per chain.
+        num_samples: NUTS draws per chain.
+        num_chains: Chains, run vectorised.
+        target_accept_prob: NUTS target acceptance probability.
 
     Returns:
-        ``sqrt(sum of discarded singular values squared / ((n_row - rank) * (n_col - rank)))``.
+        The draws and the largest split R-hat over ``X``, ``B`` and ``sigma``.
     """
-    s = jnp.linalg.svd(matrix, compute_uv=False)
-    n_row, n_col = matrix.shape
-    return float(jnp.sqrt((s[rank:] ** 2).sum() / ((n_row - rank) * (n_col - rank))))
+    n_row, n_w = time_course.shape
+    n_ref = ref_rows.shape[0]
+    sigma0 = jnp.ones(n_w) if sigma is None else sigma
+    # For a given noise the noise-scaled SVD is the maximum likelihood fit, and its residual
+    # gives the noise: alternate a few times for a start and a well-scaled gauge.
+    for _ in range(3 if sigma is None else 0):
+        u, s, vt = jnp.linalg.svd(time_course / sigma0, full_matrices=False)
+        resid = time_course - ((u[:, :k] * s[:k]) @ vt[:k]) * sigma0
+        sigma0 = jnp.sqrt((resid**2).sum(axis=0) / (n_row - k))
+    _, s, vt = jnp.linalg.svd(time_course / sigma0, full_matrices=True)
+    y0, y_perp, b_scale = vt[:k], vt[k:], 1.0 / s[:k, None]
+
+    def model() -> None:
+        x = jnp.asarray(numpyro.sample("x", dist.ImproperUniform(constraints.real, (), (n_row, k))))
+        b = jnp.asarray(
+            numpyro.sample("b", dist.ImproperUniform(constraints.real, (), (k, n_w - k)))
+        )
+        # b is scaled by the singular values so that every latent has a posterior sd near 1.
+        y = jnp.asarray(numpyro.deterministic("y", (y0 + (b_scale * b) @ y_perp) * sigma0))
+        noise = (
+            sigma
+            if sigma is not None
+            else numpyro.sample("sigma", dist.HalfNormal(noise_scale).expand([n_w]).to_event(1))
+        )
+        numpyro.sample("absorbance", dist.Normal(x @ y, noise).to_event(2), obs=time_course)
+        if n_ref:
+            x_ref = jnp.asarray(
+                numpyro.sample("x_ref", dist.ImproperUniform(constraints.real, (), (n_ref, k)))
+            )
+            numpyro.sample(
+                "reference", dist.Normal(x_ref @ y, ref_sd[:, None]).to_event(2), obs=ref_rows
+            )
+
+    init = {
+        "x": (time_course / sigma0) @ y0.T,
+        "b": jnp.zeros((k, n_w - k)),
+        "sigma": sigma0,
+        "x_ref": (ref_rows / sigma0) @ y0.T,
+    }
+    kernel = NUTS(
+        model, init_strategy=init_to_value(values=init), target_accept_prob=target_accept_prob
+    )
+    mcmc = MCMC(
+        kernel,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+        chain_method="vectorized",
+        progress_bar=False,
+    )
+    mcmc.run(key)
+    chains = mcmc.get_samples(group_by_chain=True)
+    r_hat = max(
+        float(split_gelman_rubin(chains[site]).max())
+        for site in ("x", "b", "sigma")
+        if site in chains
+    )
+    draws = mcmc.get_samples()
+    n_sample = num_chains * num_samples
+    return _Identified(
+        x=draws["x"],
+        x_ref=draws["x_ref"] if n_ref else jnp.zeros((n_sample, 0, k)),
+        y=draws["y"],
+        sigma=draws["sigma"] if sigma is None else jnp.tile(sigma, (n_sample, 1)),
+        r_hat=r_hat,
+    )
 
 
 def resolve_band(
     dataset: SpectralDataset,
     key: Array,
     *,
-    sigma: float | None = None,
-    z_slack: float = 3.5,
+    level: float = 0.95,
+    sigma: float | Array | None = None,
+    noise_scale: float | None = None,
+    num_warmup: int = 500,
+    num_samples: int = 500,
+    num_chains: int = 2,
+    target_accept_prob: float = 0.8,
     n_iter: int = 8000,
     n_burn: int = 500,
     thin: int = 2,
     n_als: int = 200,
     n_restart: int = 8,
     n_search: int = 30000,
-) -> FeasibleBand:
-    """Resolve ``dataset`` into the band of every spectra/profile split the data allow.
+) -> CredibleBand:
+    """Resolve ``dataset`` into the credible band of every spectra/profile split it allows.
 
-    Closure: in every run, species sum to ``initial_state[run].sum()`` at every time.
-    Every species with a finite ``reference_spectra`` row is pinned by it; species
+    The noise is independent between all points, normal, with one standard deviation per
+    wavelength. Closure: in every run, species sum to ``initial_state[run].sum()`` at every
+    time. Every species with a finite ``reference_spectra`` row is pinned by it; species
     without one are resolved only up to relabelling among themselves. The work is done
     with concentrations divided by the mean run total and absorbance by its RMS, so every
     tolerance acts on a problem of unit scale and the result does not depend on the units;
     every output is in the dataset's units.
 
+    Two normal quantiles follow from ``level``. A re-mixing is feasible unless some value
+    is below zero by more than ``z_region`` posterior sd, with ``z_region`` chosen so that
+    the true split passes all ``n_value`` tests together with probability ``level``:
+    ``level ** (1 / n_value)`` per test. The band then takes, over the feasible region, the
+    central ``level`` posterior interval of every value.
+
     Args:
         dataset: Validated observations; ``mask`` must be all True.
-        key: PRNG key for the start search, the hit-and-run chain and the noise draws.
-        sigma: Noise standard deviation in absorbance units. ``None`` estimates it from
-            the rank-``n_species`` residual of the time course.
-        z_slack: Non-negativity is tested at ``-z_slack`` noise sd, and the band gets a
-            ``z_slack`` sd noise margin. 3.5 keeps ~100 true zeros all inside ~98% of the
-            time (0.99977 ** 100).
+        key: PRNG key for NUTS, the start search, the hit-and-run chain and the noise draws.
+        level: Credibility level of the band, between 0 and 1.
+        sigma: Known noise standard deviation in absorbance units, one number or one per
+            wavelength. ``None`` infers one per wavelength.
+        noise_scale: Scale of the half-normal prior on each wavelength's noise standard
+            deviation, in absorbance units. ``None`` takes the RMS absorbance, which is weak.
+        num_warmup: NUTS warmup steps per chain.
+        num_samples: NUTS draws per chain.
+        num_chains: NUTS chains.
+        target_accept_prob: NUTS target acceptance probability.
         n_iter: Hit-and-run iterations.
         n_burn: Iterations discarded before draws are kept.
         thin: Keep every ``thin``-th draw after burn-in.
@@ -125,25 +269,32 @@ def resolve_band(
         n_search: Maximum steps per restart of the feasible-start search.
 
     Returns:
-        The band, its ambiguity part, and flat draws.
+        The band, its ambiguity part, flat draws and the noise posterior.
 
     Raises:
         RuntimeError: If JAX float64 is not enabled.
         NotImplementedError: If ``dataset.mask`` has any False entry.
-        ValueError: If a tuning argument is out of range, if the mean run total or the
-            absorbance RMS is not finite and positive, or if no feasible split is found:
-            the rank, closure or references contradict the data, or the search failed
-            numerically.
+        ValueError: If an argument is out of range, if there are not more spectra and
+            wavelengths than species, if the mean run total or the absorbance RMS is not
+            finite and positive, or if no feasible split is found: the rank, closure or
+            references contradict the data, or the search failed numerically.
+
+    Warns:
+        UserWarning: If the chains of the identified part disagree (split R-hat above 1.05).
     """
     if not jax.config.read("jax_enable_x64"):
         raise RuntimeError(
             "resolve_band needs float64: call jax.config.update('jax_enable_x64', True) "
             "before creating any arrays. spectrahandler never enables it itself."
         )
-    if sigma is not None and not (math.isfinite(sigma) and sigma > 0):
+    if sigma is not None and not bool((jnp.isfinite(sigma) & (jnp.asarray(sigma) > 0)).all()):
         raise ValueError(f"sigma must be finite and positive, got {sigma}")
     for name, value, ok, rule in [
-        ("z_slack", z_slack, z_slack >= 0, ">= 0"),
+        ("level", level, 0 < level < 1, "> 0 and < 1"),
+        ("noise_scale", noise_scale, noise_scale is None or noise_scale > 0, "> 0"),
+        ("num_warmup", num_warmup, num_warmup >= 1, ">= 1"),
+        ("num_samples", num_samples, num_samples >= 4, ">= 4"),
+        ("num_chains", num_chains, num_chains >= 1, ">= 1"),
         ("n_burn", n_burn, 0 <= n_burn < n_iter, f">= 0 and < n_iter = {n_iter}"),
         ("thin", thin, thin >= 1, ">= 1"),
         ("n_restart", n_restart, n_restart >= 1, ">= 1"),
@@ -155,25 +306,49 @@ def resolve_band(
     if not bool(dataset.mask.all()):
         raise NotImplementedError("resolve_band requires fully measured runs")
     dataset, c_scale, a_scale = _to_unit_scale(dataset)
+    s_scale = a_scale / c_scale
     k = dataset.n_species
+    n_w = dataset.n_wavelength
     n_row = dataset.n_run * dataset.n_time
-    time_course = dataset.absorbance.reshape(n_row, dataset.n_wavelength)
-    sigma = _estimate_sigma(time_course, k) if sigma is None else sigma / a_scale
-
-    # Each reference becomes one more data row, weighted so its noise is sigma too, with
-    # composition `weight` of its own species and zero of every other.
+    if min(n_row, n_w) <= k:
+        raise ValueError(f"need more spectra ({n_row}) and wavelengths ({n_w}) than species ({k})")
+    time_course = dataset.absorbance.reshape(n_row, n_w)
     has_ref = jnp.isfinite(dataset.reference_spectra).all(axis=1)
     ref_idx = jnp.flatnonzero(has_ref)
-    weight = sigma / dataset.reference_sigma[ref_idx]
-    ref_rows = weight[:, None] * dataset.reference_spectra[ref_idx]
-    ref_comp = weight[:, None] * jnp.eye(k)[ref_idx]
+    ref_comp = jnp.eye(k)[ref_idx]
 
-    data = jnp.concatenate([time_course, ref_rows])
-    u, s, vt = jnp.linalg.svd(data, full_matrices=False)
-    x, y, s_k = u[:, :k] * s[:k], vt[:k], s[:k]
+    k_post, k_search, k_chain, k_noise = jax.random.split(key, 4)
+    post = _sample_identified(
+        time_course,
+        dataset.reference_spectra[ref_idx],
+        dataset.reference_sigma[ref_idx],
+        k,
+        k_post,
+        sigma=None if sigma is None else jnp.broadcast_to(jnp.asarray(sigma) / a_scale, (n_w,)),
+        noise_scale=1.0 if noise_scale is None else noise_scale / a_scale,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+        target_accept_prob=target_accept_prob,
+    )
+    if post.r_hat > _R_HAT_WARN:
+        warnings.warn(
+            f"the chains of the identified part disagree (split R-hat {post.r_hat:.2f}); "
+            "raise num_warmup or num_samples",
+            stacklevel=2,
+        )
+    # Posterior mean and, per row of X and per column of Y, the K x K covariance: all that a
+    # single concentration or spectrum value needs under any re-mixing.
+    x_time, y = post.x.mean(axis=0), post.y.mean(axis=0)
+    x = jnp.concatenate([x_time, post.x_ref.mean(axis=0)])
+    cov_x = jax.vmap(lambda draws: jnp.cov(draws.T), in_axes=1)(post.x)
+    cov_y = jax.vmap(lambda draws: jnp.cov(draws.T), in_axes=2)(post.y)
+    y_pinv = jnp.linalg.pinv(y)
+    z_region = float(norm.ppf(level ** (1.0 / (n_row * k + k * n_w))))
+    z_margin = float(norm.ppf(0.5 + level / 2))
 
     # Equalities on vec(T), row-major. Closure: X @ T @ 1 = row totals, so T @ 1 = t_star.
-    # References: x_ref @ T = composition.
+    # References: x_ref @ T = the unit composition of the reference's species.
     totals = jnp.repeat(dataset.initial_state.sum(axis=1), dataset.n_time)
     row_sums = jnp.concatenate([totals, ref_comp.sum(axis=1)])
     t_star = jnp.linalg.lstsq(x, row_sums)[0]
@@ -183,7 +358,6 @@ def resolve_band(
     _, eq_sv, eq_vt = jnp.linalg.svd(eq)
     rank = int((eq_sv > 1e-8 * eq_sv[0]).sum())
     null = eq_vt[rank:]
-    x_time = x[:n_row]
     tau = jnp.linalg.norm(t_particular)
 
     def parts(theta: Array) -> tuple[Array, Array, Array, Array]:
@@ -191,15 +365,15 @@ def resolve_band(
         r = jnp.linalg.inv(t)
         c: Array = x_time @ t
         sp: Array = r @ y
-        sd_c: Array = sigma * jnp.linalg.norm(t, axis=0)
-        sd_s: Array = sigma * jnp.sqrt(((r / s_k) ** 2).sum(axis=1))
+        sd_c: Array = jnp.sqrt(jnp.einsum("ak,iab,bk->ik", t, cov_x, t))
+        sd_s: Array = jnp.sqrt(jnp.einsum("ka,wab,kb->kw", r, cov_y, r))
         return c, sp, sd_c, sd_s
 
     def violation(theta: Array) -> Array:
         t = (t_particular + theta @ null).reshape(k, k)
         c, sp, sd_c, sd_s = parts(theta)
-        v = (jnp.clip(-(c + z_slack * sd_c), 0.0) / sd_c).sum() + (
-            jnp.clip(-(sp + z_slack * sd_s[:, None]), 0.0) / sd_s[:, None]
+        v = (jnp.clip(-(c + z_region * sd_c), 0.0) / sd_c).sum() + (
+            jnp.clip(-(sp + z_region * sd_s), 0.0) / sd_s
         ).sum()
         return jnp.where(
             jnp.abs(jnp.linalg.det(t)) < 1e-12 * (tau / _TAU_REFERENCE) ** k, jnp.inf, v
@@ -211,20 +385,16 @@ def resolve_band(
         return theta
 
     def alternate(_: int, theta: Array) -> Array:
-        """One MCR-ALS sweep in the reduced space: clip C and refit, clip S and refit.
-
-        ``y`` has orthonormal rows, so ``S = inv(T) @ y`` inverts as ``inv(S @ y.T)``.
-        """
+        """One MCR-ALS sweep in the reduced space: clip C and refit, clip S and refit."""
         t = (t_particular + theta @ null).reshape(k, k)
         t = jnp.linalg.lstsq(x_time, jnp.clip(x_time @ t, 0.0))[0]
         t = (t_particular + to_theta(t) @ null).reshape(k, k)
-        t = jnp.linalg.inv(jnp.clip(jnp.linalg.inv(t) @ y, 0.0) @ y.T)
+        t = jnp.linalg.inv(jnp.clip(jnp.linalg.inv(t) @ y, 0.0) @ y_pinv)
         return to_theta(t)
 
     guess = _initial_guess(x, x_time, totals, ref_comp, ref_idx, t_particular, null, k)
     theta0 = jax.lax.fori_loop(0, n_als, alternate, guess)
     theta0 = jnp.where(jnp.isfinite(theta0).all(), theta0, guess)
-    k_search, k_chain, k_noise = jax.random.split(key, 3)
     theta, v = _find_feasible(violation, theta0, tau, k_search, n_restart, n_search)
     if not math.isfinite(float(v)):
         raise ValueError(
@@ -237,30 +407,34 @@ def resolve_band(
             "references contradict the data"
         )
 
-    lo, hi, draws = _hit_and_run(parts, violation, theta, tau, k_chain, n_iter)
+    lo, hi, draws = _hit_and_run(parts, violation, theta, tau, k_chain, n_iter, z_margin)
     c, sp, sd_c, sd_s = (d[n_burn::thin] for d in draws)
     shape = (dataset.n_run, dataset.n_time, k)
-
-    margin_c, margin_s = z_slack * jnp.median(sd_c, axis=0), z_slack * jnp.median(sd_s, axis=0)
     n_c = n_row * k
-    c_min, c_max = lo[:n_c].reshape(n_row, k), hi[:n_c].reshape(n_row, k)
-    s_min, s_max = lo[n_c:].reshape(k, -1), hi[n_c:].reshape(k, -1)
 
+    def split(values: Array) -> tuple[Array, Array]:
+        """All values as concentrations and spectra, in the dataset's units."""
+        return c_scale * values[:n_c].reshape(shape), s_scale * values[n_c:].reshape(1, k, n_w)
+
+    (c_mean_lo, s_mean_lo), (c_lo, s_lo), _ = (split(row) for row in lo)
+    (c_mean_hi, s_mean_hi), _, (c_hi, s_hi) = (split(row) for row in hi)
     kc, ks = jax.random.split(k_noise)
-    c_draws = c + sd_c[:, None, :] * jax.random.normal(kc, c.shape)
-    s_draws = sp + sd_s[:, :, None] * jax.random.normal(ks, sp.shape)
-    s_scale = a_scale / c_scale
-    return FeasibleBand(
-        concentration_lower=c_scale * jnp.clip(c_min - margin_c, 0.0).reshape(shape),
-        concentration_upper=c_scale * (c_max + margin_c).reshape(shape),
-        spectra_lower=s_scale * jnp.clip(s_min - margin_s[:, None], 0.0)[None],
-        spectra_upper=s_scale * (s_max + margin_s[:, None])[None],
-        concentration_ambiguity=c_scale * jnp.stack([c_min, c_max]).reshape(2, *shape),
-        spectra_ambiguity=s_scale * jnp.stack([s_min, s_max])[:, None],
-        concentration_draws=c_scale * c_draws.reshape(-1, *shape),
-        spectra_draws=s_scale * s_draws[:, None],
-        sigma=sigma * a_scale,
+    sigma_draws = post.sigma * a_scale
+    return CredibleBand(
+        concentration_lower=jnp.clip(c_lo, 0.0),
+        concentration_upper=c_hi,
+        spectra_lower=jnp.clip(s_lo, 0.0),
+        spectra_upper=s_hi,
+        concentration_ambiguity=jnp.stack([c_mean_lo, c_mean_hi]),
+        spectra_ambiguity=jnp.stack([s_mean_lo, s_mean_hi]),
+        concentration_draws=c_scale
+        * (c + sd_c * jax.random.normal(kc, c.shape)).reshape(-1, *shape),
+        spectra_draws=s_scale * (sp + sd_s * jax.random.normal(ks, sp.shape))[:, None],
+        sigma=sigma_draws.mean(axis=0),
+        sigma_draws=sigma_draws,
+        level=level,
         n_free=int(null.shape[0]),
+        r_hat=post.r_hat,
     )
 
 
@@ -417,11 +591,13 @@ def _hit_and_run(
     tau: Array,
     key: Array,
     n_iter: int,
+    z_margin: float,
 ) -> tuple[Array, Array, tuple[Array, Array, Array, Array]]:
-    """Uniform draws over the region, plus the extreme value of every quantity seen.
+    """Uniform draws over the region, plus the extremes of every value over the region.
 
-    Edge searches start and stop at fixed multiples of ``tau``, the scale of the
-    re-mixing matrix.
+    The extremes have shape ``(3, n_value)``: of the posterior mean, of the interval's lower
+    edge ``mean - z_margin * sd`` and of its upper edge ``mean + z_margin * sd``. Edge
+    searches start and stop at fixed multiples of ``tau``, the scale of the re-mixing matrix.
     """
     unit = tau / _TAU_REFERENCE
 
@@ -443,8 +619,10 @@ def _hit_and_run(
         return distance
 
     def flat(theta: Array) -> Array:
-        c, sp, _, _ = parts(theta)
-        return jnp.concatenate([c.ravel(), sp.ravel()])
+        c, sp, sd_c, sd_s = parts(theta)
+        mean = jnp.concatenate([c.ravel(), sp.ravel()])
+        margin = z_margin * jnp.concatenate([sd_c.ravel(), sd_s.ravel()])
+        return jnp.stack([mean, mean - margin, mean + margin])
 
     def step(
         carry: tuple[Array, Array, Array], key: Array

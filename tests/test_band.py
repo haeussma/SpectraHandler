@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from spectrahandler.curve_resolution import (
-    FeasibleBand,
+    CredibleBand,
     SpectralDataset,
     make_realistic_dataset,
     resolve_band,
@@ -35,13 +35,13 @@ def _with_reference(dataset: SpectralDataset, spectrum_a: jax.Array) -> Spectral
 
 
 @pytest.fixture(scope="module")
-def resolved() -> tuple[SpectralDataset, FeasibleBand]:
+def resolved() -> tuple[SpectralDataset, CredibleBand]:
     data, spectra, _ = make_realistic_dataset(jax.random.key(0))
     data = _with_reference(data, spectra[0])
     return data, resolve_band(data, jax.random.key(1), n_iter=2000)
 
 
-def test_shapes(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
+def test_shapes(resolved: tuple[SpectralDataset, CredibleBand]) -> None:
     data, band = resolved
     c_shape = (data.n_run, data.n_time, data.n_species)
     s_shape = (1, data.n_species, data.n_wavelength)  # one set of spectra for all runs
@@ -51,10 +51,17 @@ def test_shapes(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
     assert band.spectra_ambiguity.shape == (2, *s_shape)
     assert band.concentration_draws.shape[1:] == c_shape
     assert band.spectra_draws.shape[1:] == s_shape
+    assert band.sigma.shape == (data.n_wavelength,)
+    assert band.sigma_draws.shape == (1000, data.n_wavelength)  # 2 chains of 500
+
+
+def test_chains_agree(resolved: tuple[SpectralDataset, CredibleBand]) -> None:
+    """The identified part has one mode, so two chains must agree."""
+    assert resolved[1].r_hat < 1.05
 
 
 def test_one_reference_leaves_four_free_numbers(
-    resolved: tuple[SpectralDataset, FeasibleBand],
+    resolved: tuple[SpectralDataset, CredibleBand],
 ) -> None:
     """9 entries of T, minus 3 for closure, minus 3 for the reference, plus 1 shared."""
     assert resolved[1].n_free == 4
@@ -65,25 +72,46 @@ def test_no_reference_leaves_six_free_numbers() -> None:
     assert resolve_band(data, jax.random.key(1), n_iter=200, n_burn=100).n_free == 6
 
 
-def test_sigma_is_estimated(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
-    assert resolved[1].sigma == pytest.approx(SIGMA, rel=0.1)
+def test_sigma_is_estimated(resolved: tuple[SpectralDataset, CredibleBand]) -> None:
+    """One noise level per wavelength: each from 30 spectra, so single values scatter."""
+    sigma = resolved[1].sigma
+    assert float(jnp.median(sigma)) == pytest.approx(SIGMA, rel=0.1)
+    np.testing.assert_allclose(sigma, SIGMA, rtol=0.6)
+
+
+def test_noise_that_grows_with_wavelength_is_recovered() -> None:
+    """Noise three times larger at the red end than at the blue end is seen as such."""
+    clean, _, _ = make_realistic_dataset(jax.random.key(0), noise=0.0)
+    true_sigma = SIGMA * jnp.linspace(1.0, 3.0, clean.n_wavelength)
+    noise = true_sigma * jax.random.normal(jax.random.key(3), clean.absorbance.shape)
+    data = dataclasses.replace(clean, absorbance=clean.absorbance + noise)
+    sigma = resolve_band(data, jax.random.key(1), n_iter=200, n_burn=100).sigma
+    np.testing.assert_allclose(sigma[-16:].mean(), true_sigma[-16:].mean(), rtol=0.15)
+    np.testing.assert_allclose(sigma[:16].mean(), true_sigma[:16].mean(), rtol=0.15)
+
+
+def test_a_given_sigma_is_used_as_is() -> None:
+    data, _, _ = make_realistic_dataset(jax.random.key(0))
+    band = resolve_band(data, jax.random.key(1), sigma=0.003, n_iter=200, n_burn=100)
+    np.testing.assert_allclose(band.sigma, 0.003)
+    np.testing.assert_allclose(band.sigma_draws, 0.003)
 
 
 def test_band_brackets_ambiguity_and_is_non_negative(
-    resolved: tuple[SpectralDataset, FeasibleBand],
+    resolved: tuple[SpectralDataset, CredibleBand],
 ) -> None:
     _, band = resolved
     assert bool((band.concentration_lower >= 0).all())
     assert bool((band.spectra_lower >= 0).all())
-    # The ambiguity extremes may sit a little below zero (the noise slack); the band is
-    # clipped at zero, so compare against the clipped extreme.
+    # The ambiguity extremes may sit a little below zero (the region's tolerance); the
+    # band is clipped at zero, so compare against the clipped extreme.
     floor = jnp.clip(band.concentration_ambiguity[0], 0.0)
     assert bool((band.concentration_lower <= floor + 1e-12).all())
     assert bool((band.concentration_upper >= band.concentration_ambiguity[1]).all())
     assert bool((band.spectra_upper >= band.spectra_ambiguity[1]).all())
 
 
-def test_draws_respect_closure(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
+def test_draws_respect_closure(resolved: tuple[SpectralDataset, CredibleBand]) -> None:
     """Closure holds in least squares over the rows, so single rows scatter at noise level."""
     data, band = resolved
     totals = band.concentration_draws.sum(axis=-1).mean(axis=0)
@@ -92,7 +120,7 @@ def test_draws_respect_closure(resolved: tuple[SpectralDataset, FeasibleBand]) -
     assert float(jnp.abs(totals - total).max()) < 0.3
 
 
-def test_draws_reproduce_the_data(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
+def test_draws_reproduce_the_data(resolved: tuple[SpectralDataset, CredibleBand]) -> None:
     """Every split reproduces the data to the noise: residual rms close to sigma."""
     data, band = resolved
     predicted = (band.concentration_draws @ band.spectra_draws).mean(axis=0)
@@ -101,7 +129,7 @@ def test_draws_reproduce_the_data(resolved: tuple[SpectralDataset, FeasibleBand]
 
 
 def test_reference_lies_inside_its_band(
-    resolved: tuple[SpectralDataset, FeasibleBand],
+    resolved: tuple[SpectralDataset, CredibleBand],
 ) -> None:
     data, band = resolved
     ref = data.reference_spectra[0]
@@ -136,16 +164,16 @@ def test_result_does_not_depend_on_units() -> None:
 
     The factors are powers of two near 1e-6 and 1e3, so the rescaled data are exact in
     floating point and the results agree to rounding. Decimal factors change the data by
-    one ulp, and the chain, which branches on exact feasibility tests, turns that into a
-    different but equally valid path; for those factors only sigma is compared, and the
-    band must still resolve.
+    one ulp, and the samplers turn that into a different but equally valid path; for those
+    factors only sigma is compared, to Monte Carlo accuracy, and the band must still
+    resolve.
     """
     data, spectra, _ = make_realistic_dataset(jax.random.key(0))
     data = _with_reference(data, spectra[0])
     kwargs = {"n_iter": 300, "n_burn": 100}
     ref = resolve_band(data, jax.random.key(1), **kwargs)
 
-    def rescaled(c: float, a: float) -> FeasibleBand:
+    def rescaled(c: float, a: float) -> CredibleBand:
         """Concentrations times ``c``, absorbance times ``a``, so spectra times ``a / c``."""
         converted = dataclasses.replace(
             data,
@@ -162,8 +190,8 @@ def test_result_does_not_depend_on_units() -> None:
     np.testing.assert_allclose(band.concentration_upper, ref.concentration_upper * c, rtol=1e-6)
     np.testing.assert_allclose(band.spectra_lower, ref.spectra_lower * (a / c), rtol=1e-6)
     np.testing.assert_allclose(band.spectra_upper, ref.spectra_upper * (a / c), rtol=1e-6)
-    assert band.sigma == pytest.approx(ref.sigma * a, rel=1e-6)
-    assert rescaled(1e-6, 1e3).sigma == pytest.approx(ref.sigma * 1e3, rel=1e-6)
+    np.testing.assert_allclose(band.sigma, ref.sigma * a, rtol=1e-6)
+    np.testing.assert_allclose(rescaled(1e-6, 1e3).sigma, ref.sigma * 1e3, rtol=0.03)
 
 
 @pytest.mark.parametrize(
@@ -172,7 +200,9 @@ def test_result_does_not_depend_on_units() -> None:
         ({"sigma": 0.0}, "sigma must be finite and positive, got 0.0"),
         ({"sigma": -0.002}, "sigma must be finite and positive, got -0.002"),
         ({"sigma": float("nan")}, "sigma must be finite and positive, got nan"),
-        ({"z_slack": -1.0}, r"z_slack must be >= 0, got -1.0"),
+        ({"level": 1.0}, r"level must be > 0 and < 1, got 1.0"),
+        ({"noise_scale": 0.0}, r"noise_scale must be > 0, got 0.0"),
+        ({"num_samples": 2}, r"num_samples must be >= 4, got 2"),
         ({"n_iter": 500, "n_burn": 500}, r"n_burn must be >= 0 and < n_iter = 500, got 500"),
         ({"n_burn": -1}, r"n_burn must be >= 0 and < n_iter = 8000, got -1"),
         ({"thin": 0}, r"thin must be >= 1, got 0"),
@@ -182,13 +212,13 @@ def test_result_does_not_depend_on_units() -> None:
     ],
 )
 def test_rejects_bad_arguments(
-    resolved: tuple[SpectralDataset, FeasibleBand], kwargs: dict[str, Any], match: str
+    resolved: tuple[SpectralDataset, CredibleBand], kwargs: dict[str, Any], match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
         resolve_band(resolved[0], jax.random.key(1), **kwargs)
 
 
-def test_requires_float64(resolved: tuple[SpectralDataset, FeasibleBand]) -> None:
+def test_requires_float64(resolved: tuple[SpectralDataset, CredibleBand]) -> None:
     """Without x64 the search fails as a bogus "no feasible split"; refuse up front."""
     jax.config.update("jax_enable_x64", False)
     try:

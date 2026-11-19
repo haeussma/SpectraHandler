@@ -20,7 +20,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 from matplotlib.lines import Line2D
 
-from spectrahandler.curve_resolution.band import FeasibleBand
+from spectrahandler.curve_resolution.band import CredibleBand
 from spectrahandler.curve_resolution.dataset import SpectralDataset
 from spectrahandler.curve_resolution.diagnostics import NoiseDiagnostics
 from spectrahandler.kinetics.fit import KineticFit
@@ -211,9 +211,9 @@ def plot_noise(diagnostics: NoiseDiagnostics, dataset: SpectralDataset) -> Figur
     return fig
 
 
-def _check_runs(result: KineticFit | FeasibleBand, dataset: SpectralDataset) -> None:
+def _check_runs(result: KineticFit | CredibleBand, dataset: SpectralDataset) -> None:
     """Raise if ``result`` was not made from the runs of ``dataset``, in the same order."""
-    if isinstance(result, FeasibleBand):
+    if isinstance(result, CredibleBand):
         if result.concentration_lower.shape[0] != dataset.n_run:
             raise ValueError(
                 f"the band has {result.concentration_lower.shape[0]} runs, "
@@ -275,7 +275,7 @@ def plot_spectra(
 
 
 def plot_deconvolution(
-    result: KineticFit | FeasibleBand,
+    result: KineticFit | CredibleBand,
     dataset: SpectralDataset,
     run: str,
     *,
@@ -289,7 +289,7 @@ def plot_deconvolution(
     For a :class:`~spectrahandler.kinetics.KineticFit`, dots are every measured spectrum
     projected onto the run's fitted spectra (:meth:`SpectralDataset.project`), what the
     spectra alone say; ink lines are the kinetic model. For a
-    :class:`~spectrahandler.curve_resolution.FeasibleBand`, both panels shade the band:
+    :class:`~spectrahandler.curve_resolution.CredibleBand`, both panels shade the band:
     every split the data allow, no single curve.
 
     Args:
@@ -319,7 +319,7 @@ def plot_deconvolution(
     time = np.asarray(dataset.time[r])[measured]
     wavelength = np.asarray(dataset.wavelength)
 
-    if isinstance(result, FeasibleBand):
+    if isinstance(result, CredibleBand):
         c_lo = np.asarray(result.concentration_lower[r])[measured]
         c_hi = np.asarray(result.concentration_upper[r])[measured]
         s_lo, s_hi = np.asarray(result.spectra_lower[0]), np.asarray(result.spectra_upper[0])

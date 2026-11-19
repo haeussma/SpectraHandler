@@ -7,6 +7,10 @@ implements: [src/spectrahandler/curve_resolution/band.py]
 
 # 0003 — Report the feasible band; a posterior only for what the data identify
 
+> Amended by [ADR 0007](0007-credible-band-posterior-for-the-identified-part.md)
+> (2026-11-19): the identified part is now sampled with NumPyro and the linearised noise
+> margin is gone. The core decision below stands: no prior identifies the split.
+
 ## Context
 
 Curve resolution writes a time course as `A = C·S + noise`, with `C` the concentration

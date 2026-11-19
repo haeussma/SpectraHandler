@@ -15,7 +15,7 @@ from spectrahandler.curve_resolution import (
     make_realistic_dataset,
     noise_diagnostics,
 )
-from spectrahandler.curve_resolution.band import FeasibleBand, resolve_band
+from spectrahandler.curve_resolution.band import CredibleBand, resolve_band
 from spectrahandler.kinetics import KineticFit, Scheme, fit_kinetics, make_kinetic_replicates
 from spectrahandler.plot import (
     plot_deconvolution,
@@ -75,7 +75,7 @@ def test_unknown_run_is_an_error(kinetic: tuple[SpectralDataset, KineticFit]) ->
 
 
 @pytest.fixture(scope="module")
-def band() -> tuple[SpectralDataset, FeasibleBand]:
+def band() -> tuple[SpectralDataset, CredibleBand]:
     data, _, _ = make_realistic_dataset(jax.random.key(0))
     return data, resolve_band(data, jax.random.key(1), n_iter=200, n_burn=100)
 
@@ -115,7 +115,7 @@ def test_deconvolution_of_a_fit_draws_projection_and_model(
 
 
 def test_deconvolution_of_a_band_shades_every_species(
-    band: tuple[SpectralDataset, FeasibleBand],
+    band: tuple[SpectralDataset, CredibleBand],
 ) -> None:
     data, result = band
     ax_c, ax_s = plot_deconvolution(result, data, data.run_ids[0])

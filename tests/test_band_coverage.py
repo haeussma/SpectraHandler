@@ -11,7 +11,7 @@ import pytest
 from jax import Array
 
 from spectrahandler.curve_resolution import (
-    FeasibleBand,
+    CredibleBand,
     SpectralDataset,
     make_realistic_dataset,
     resolve_band,
@@ -74,7 +74,7 @@ def _match(fitted: Array, truth: Array) -> Array:
     return jnp.asarray(taken)
 
 
-def _coverage(band: FeasibleBand, spectra: Array, concentrations: Array) -> tuple[float, float]:
+def _coverage(band: CredibleBand, spectra: Array, concentrations: Array) -> tuple[float, float]:
     """Fraction of true amounts and of true spectrum values inside the band."""
     p = _match(band.spectra_draws.mean(axis=0)[0], spectra)
     c_in = (concentrations >= band.concentration_lower[..., p]) & (
@@ -84,7 +84,7 @@ def _coverage(band: FeasibleBand, spectra: Array, concentrations: Array) -> tupl
     return float(c_in.mean()), float(s_in.mean())
 
 
-def _flat_coverage(band: FeasibleBand, spectra: Array, concentrations: Array) -> float:
+def _flat_coverage(band: CredibleBand, spectra: Array, concentrations: Array) -> float:
     """Fraction of true amounts inside the central 95% of the flat draws."""
     p = _match(band.spectra_draws.mean(axis=0)[0], spectra)
     lo, hi = jnp.percentile(band.concentration_draws, jnp.array([2.5, 97.5]), axis=0)
