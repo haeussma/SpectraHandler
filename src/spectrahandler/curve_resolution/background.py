@@ -10,10 +10,11 @@ the fit bounds the baseline error. See ADR 0004.
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 
-__all__ = ["Background", "BackgroundFit", "fit_backgrounds"]
+__all__ = ["Background", "BackgroundFit", "align_baselines", "background_shapes", "fit_backgrounds"]
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,64 @@ class BackgroundFit:
     tolerance_factor: Array
 
 
+def background_shapes(backgrounds: tuple[Background, ...], wavelength: Array) -> Array:
+    """The backgrounds' shapes on a wavelength grid, shape ``(n_wavelength, n_background)``.
+
+    Args:
+        backgrounds: The backgrounds; may be empty.
+        wavelength: Grid, shape ``(n_wavelength,)``.
+
+    Returns:
+        One column per background.
+
+    Raises:
+        ValueError: If a shape does not have the grid's size or is not finite.
+    """
+    n_w = wavelength.shape[0]
+    if not backgrounds:
+        return jnp.zeros((n_w, 0))
+    columns = [jnp.asarray(b.shape(wavelength)) for b in backgrounds]
+    if any(c.shape != (n_w,) or not bool(jnp.isfinite(c).all()) for c in columns):
+        raise ValueError(
+            f"every background shape must be finite with shape ({n_w},); got "
+            f"{[c.shape for c in columns]}"
+        )
+    return jnp.stack(columns, axis=-1)
+
+
+def align_baselines(absorbance: Array, shapes: Array, n_species: int, n_sweep: int = 30) -> Array:
+    """Background amplitudes of every run relative to the first, by alternating fits.
+
+    All runs share one set of species spectra, so a difference between two runs that is
+    constant in time and has a background's shape cannot be chemistry. Alternately the
+    data, with the current backgrounds removed, are approximated at rank ``n_species``,
+    and the backgrounds are refitted to what that approximation leaves, run by run. This is
+    a starting point; the fit samples the amplitudes afterwards.
+
+    Args:
+        absorbance: Shape ``(n_run, n_time, n_wavelength)``.
+        shapes: Background shapes, shape ``(n_wavelength, n_background)``.
+        n_species: Rank of the chemistry.
+        n_sweep: Number of alternations.
+
+    Returns:
+        Shape ``(n_run, n_background)``; the first row is zero.
+    """
+    n_run, n_w = absorbance.shape[0], absorbance.shape[2]
+    solve = jnp.linalg.pinv(shapes)
+
+    def sweep(_: int, amplitude: Array) -> Array:
+        corrected = (absorbance - (amplitude @ shapes.T)[:, None, :]).reshape(-1, n_w)
+        u, s, vt = jnp.linalg.svd(corrected, full_matrices=False)
+        low_rank = ((u[:, :n_species] * s[:n_species]) @ vt[:n_species]).reshape(absorbance.shape)
+        fitted: Array = (absorbance - low_rank).mean(axis=1) @ solve.T
+        return fitted - fitted[0]
+
+    start = jnp.zeros((n_run, shapes.shape[1]))
+    aligned: Array = jax.lax.fori_loop(0, n_sweep, sweep, start)
+    return aligned
+
+
 def fit_backgrounds(
     absorbance: Array,
     wavelength: Array,
@@ -78,6 +137,7 @@ def fit_backgrounds(
     zero_windows: tuple[tuple[float, float], ...],
     sigma: float | Array | None = None,
     smoothing: int = 20,
+    shared: bool = False,
 ) -> BackgroundFit:
     """Fit background amplitudes where no species absorbs, and subtract the backgrounds.
 
@@ -85,6 +145,9 @@ def fit_backgrounds(
     squares with the background shapes; the fitted backgrounds are subtracted at every
     wavelength. The amplitudes' own uncertainty is not reported: it is far below the
     tolerance, which is the baseline error that matters.
+
+    With ``shared``, one set of amplitudes is fitted to the mean over all runs and
+    subtracted from every run: for runs whose baselines have already been aligned.
 
     Args:
         absorbance: Shape ``(n_run, n_time, n_wavelength)``, all finite, in absorbance
@@ -98,6 +161,7 @@ def fit_backgrounds(
             ``1 / sigma`` weights. ``None`` weights every wavelength equally.
         smoothing: Number of consecutive spectra averaged before the leftover is measured,
             so that noise does not set the tolerance. Clipped to ``n_time``.
+        shared: Fit one set of amplitudes for all runs instead of one per run.
 
     Returns:
         The corrected data, the amplitudes, the tolerance and its factor per wavelength.
@@ -134,18 +198,17 @@ def fit_backgrounds(
             f"the zero windows hold {int(in_window.sum())} wavelengths; {len(backgrounds)} "
             f"backgrounds need at least {len(backgrounds) + 2}"
         )
-    shapes = jnp.stack([jnp.asarray(b.shape(wavelength)) for b in backgrounds], axis=-1)
-    if shapes.shape != (n_w, len(backgrounds)) or not bool(jnp.isfinite(shapes).all()):
-        raise ValueError(
-            f"every background shape must be finite with shape ({n_w},); got {shapes.shape[:-1]}"
-        )
+    shapes = background_shapes(backgrounds, wavelength)
     weight = jnp.ones(n_w) if sigma is None else jnp.broadcast_to(1.0 / jnp.asarray(sigma), (n_w,))
     design = (shapes * weight[:, None])[in_window]
     if float(jnp.linalg.cond(design)) > 1e6:
         raise ValueError(f"backgrounds {names} are not separable in the zero windows; widen them")
 
     solve = jnp.linalg.pinv(design)  # weighted window data -> amplitudes
-    amplitude: Array = (absorbance.mean(axis=1) * weight)[:, in_window] @ solve.T
+    mean_spectrum = absorbance.mean(axis=1)
+    if shared:
+        mean_spectrum = jnp.broadcast_to(mean_spectrum.mean(axis=0), mean_spectrum.shape)
+    amplitude: Array = (mean_spectrum * weight)[:, in_window] @ solve.T
     corrected = absorbance - (amplitude @ shapes.T)[:, None, :]
     # A leftover bounded by 1 in the windows moves the fitted background at a wavelength by
     # at most the absolute row sum of the map from window data to background there.

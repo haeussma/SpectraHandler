@@ -117,7 +117,8 @@ from). The whole call takes about 8 s on a laptop.
 | `level` | The credibility level of the band, 0.95 by default |
 | `n_free` | How many numbers the data leave undetermined |
 | `r_hat` | Agreement between the sampling chains of step 1; close to 1 is good, and above 1.05 you get a warning |
-| `background_names`, `background_amplitude` | The backgrounds that were subtracted and their amounts per run, in absorbance units |
+| `background_names`, `background_amplitude` | The backgrounds that were removed and their amounts per run, in absorbance units |
+| `background_draws` | Posterior draws of each run's amounts relative to the first run |
 | `baseline_tolerance`, `zero_source` | By how much zero absorbance may be off at each wavelength, and where zero came from |
 
 Species **without** a reference are resolved only up to relabelling among themselves:
@@ -239,12 +240,20 @@ Real spectra are rarely concentrations times spectra and nothing else. A cuvette
 little differently in every run, a lamp drifts, and the whole spectrum is shifted or
 tilted by a few thousandths of an absorbance unit.
 
-A baseline with a free shape cannot be separated from the species spectra: any part of
-it can be moved into the spectra without changing the fit. What can be separated is a
-background with a **known shape**, if you can name a wavelength range where **no species
-absorbs**, a zero window. There the data hold only background and noise, so the amount of
-each background is measured there, and the known shape carries it across the rest of the
-spectrum.
+The baseline has two parts, and they are found in different ways.
+
+**How the runs differ from each other** is inferred by the fit itself, with no input
+from you. All runs share one set of species spectra, so if one run sits a little higher
+or is tilted against another, at every time, that cannot be chemistry. By default every
+run after the first gets an offset and a tilt relative to the first run, each with a
+posterior (`background_draws`).
+
+**What all runs have in common** cannot be found that way: a line added to every run
+can be moved into the species spectra without changing the fit. It needs outside
+information, a wavelength range where **no species absorbs**, a zero window. There the
+data hold only background and noise, so the common amount of each background is measured
+there, and its known shape carries it across the rest of the spectrum. Without a zero
+window the first run's zero is taken as it is.
 
 ```python
 import dataclasses
@@ -274,26 +283,30 @@ the tolerance (per unit concentration), and the spectrum band is widened by the 
 amount.
 
 - **Backgrounds provided:** `Background.offset()` (flat) and `Background.tilt()` (a
-  straight line). Any other known shape is `Background(name, shape)`, with `shape` a
-  function of the wavelength grid. Each gets one amount per run.
+  straight line); both are used unless you say otherwise. Any other known shape is
+  `Background(name, shape)`, with `shape` a function of the wavelength grid.
+  `backgrounds=()` switches baselines off altogether.
 - **The window is an assumption, and the tolerance tests it.** A species that absorbs
   weakly inside the window raises the tolerance by about its absorbance. A tolerance
   comparable to your signal means the window is not empty.
-- **A tilt needs a wide window.** A line fitted over 40 nm and extended over 300 nm
-  multiplies every small error. The tolerance outside the window grows accordingly
-  (one plus the leverage of the fit, a worst case), and with a narrow window and
-  several runs the fit can fail with "no feasible split". Use an offset alone when the
-  window is narrow.
+- **A common tilt needs a wide window.** A line fitted over 40 nm and extended over
+  300 nm multiplies every small error. The tolerance outside the window grows
+  accordingly (one plus the leverage of the fit, a worst case) and the band with it.
+  Use an offset alone when the window is narrow. The tilt of one run against another
+  does not have this problem: it comes from the whole spectrum.
 - **A blank gives a tighter tolerance.** A buffer blank has no absorber anywhere. Put it
   through `fit_backgrounds` with the same backgrounds and window; what it leaves outside
   the window is the real baseline error there. Pass that as `baseline_tolerance`, one
   value per wavelength, and it replaces the worst case.
-- **Reference spectra must be baseline-free.** A blank used as a reference has its own
-  baseline: correct it with `fit_backgrounds` first.
-- **Without backgrounds, a baseline problem can hide in the noise.** With several runs
-  whose baselines differ, the model explains the mismatch as noise and still returns a
-  band, which is then wrong. An inferred `sigma` well above what your instrument
-  delivers is the sign.
+- **Reference spectra and the zero.** With a zero window every reference gets background
+  amounts of its own, so a blank can be used as a reference as it was measured. Without
+  a zero window the references are taken to share the data's zero, and must be
+  baseline-free.
+- **The baseline is constant within a run.** A baseline that moves during a run is not
+  modelled; inside a zero window it shows up as a larger tolerance.
+- **A mismatch the model has no place for hides in the noise.** A missing species, or
+  baselines switched off, makes the model explain the misfit as noise and still return
+  a band. An inferred `sigma` well above what your instrument delivers is the sign.
 
 ## Tuning
 

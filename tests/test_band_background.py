@@ -2,9 +2,11 @@
 
 Two realistic a -> b -> c runs on 96 wavelengths, the second starting from b. Every run gets
 its own offset, and all share a fixed instrument wiggle of 0.002 AU that no background shape
-can fit. No species absorbs above 660 nm. That window is too narrow to pin a tilt per run
-(see test_background.py), so the gate uses offsets only.
+can fit. No species absorbs above 660 nm. That window is too narrow to pin a common tilt
+tightly, so the gate uses offsets; the tilt case is checked for resolving at all.
 """
+
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -88,6 +90,8 @@ def test_the_result_records_what_was_assumed(
     band, _, _ = resolved
     assert band.background_names == ("offset",)
     assert band.background_amplitude.shape == (2, 1)
+    assert band.background_draws.shape == (1000, 2, 1)
+    assert bool((band.background_draws[:, 0] == 0.0).all())  # the first run is the reference
     assert band.zero_source == "zero windows 660-700 nm, tolerance measured"
     # The wiggle is 0.002 AU; noise smoothed over 20 spectra adds a little. Outside the
     # window an offset has leverage 1, so the tolerance doubles there.
@@ -97,17 +101,50 @@ def test_the_result_records_what_was_assumed(
 
 
 def test_offsets_are_recovered(resolved: tuple[CredibleBand, Array, Array]) -> None:
-    """The wiggle's mean over the window goes into the offset, so the tolerance bounds the error."""
+    """The common part is off by at most the tolerance; the difference between runs is sharp."""
     band, _, _ = resolved
-    error = jnp.abs(band.background_amplitude[:, 0] - OFFSET)
-    assert float(error.max()) < float(band.baseline_tolerance[-1])
+    offsets = band.background_amplitude[:, 0]
+    assert float(jnp.abs(offsets - OFFSET).max()) < float(band.baseline_tolerance[-1])
+    assert float(offsets[1] - offsets[0]) == pytest.approx(-0.010, abs=5e-4)
+    assert float(band.background_draws[:, 1, 0].std()) < 5e-4
 
 
-def test_without_backgrounds_the_off_baseline_is_not_resolved() -> None:
-    """An offset of -0.005 AU makes every spectrum negative somewhere: no split fits."""
+def test_baselines_between_runs_are_inferred_without_a_window() -> None:
+    """The default: runs are aligned to the first, and the mismatch does not turn into noise.
+
+    Without a zero window the common zero is the first run's, taken as it is.
+    """
+    data, _, concentrations = _data(0)
+    band = resolve_band(data, jax.random.key(0))
+    assert band.background_names == ("offset", "tilt")
+    offsets = band.background_amplitude[:, 0]
+    assert float(offsets[0]) == 0.0
+    assert float(offsets[1]) == pytest.approx(-0.010, abs=5e-4)
+    assert float(jnp.median(band.sigma)) == pytest.approx(SIGMA, rel=0.15)
+    assert band.zero_source.startswith("no zero window")
+    np.testing.assert_allclose(band.baseline_tolerance, 0.0)
+    # Amounts do not depend on the common zero.
+    fitted = band.concentration_draws.mean(axis=0)
+    assert float(jnp.abs(fitted[..., 0] - concentrations[..., 0]).max()) < 1.0
+
+
+def test_without_any_background_the_mismatch_between_runs_is_not_resolved() -> None:
+    """Runs 0.010 AU apart with one set of spectra: no split fits."""
     data, _, _ = _data(0)
     with pytest.raises(ValueError, match="no feasible split"):
-        resolve_band(data, jax.random.key(0), n_restart=2, n_search=2000)
+        resolve_band(data, jax.random.key(0), backgrounds=(), n_restart=2, n_search=2000)
+
+
+def test_a_common_tilt_from_a_narrow_window_resolves_with_a_wide_tolerance() -> None:
+    """A line fitted over 40 nm and carried over 320 nm: the tolerance says how little it pins."""
+    data, spectra, concentrations = _data(0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # with a window, a reference's own baseline is no news
+        band = resolve_band(data, jax.random.key(0), zero_windows=WINDOW)
+    assert float(band.baseline_tolerance[0]) > 10 * float(band.baseline_tolerance[-1])
+    amounts, values = _coverage(band, spectra, concentrations)
+    assert amounts >= 0.95
+    assert values >= 0.95
 
 
 def test_a_tolerance_below_the_measured_one_is_an_error() -> None:
@@ -122,18 +159,19 @@ def test_a_tolerance_below_the_measured_one_is_an_error() -> None:
         )
 
 
-def test_backgrounds_and_windows_go_together() -> None:
+def test_windows_need_a_background() -> None:
     data, _, _ = _data(0)
-    with pytest.raises(ValueError, match="give both or neither"):
-        resolve_band(data, jax.random.key(0), backgrounds=OFFSETS)
+    with pytest.raises(ValueError, match="zero_windows need at least one background"):
+        resolve_band(data, jax.random.key(0), backgrounds=(), zero_windows=WINDOW)
 
 
 def test_a_given_tolerance_without_windows_is_recorded() -> None:
     data, _, _ = make_realistic_dataset(jax.random.key(0))
     band = resolve_band(data, jax.random.key(1), baseline_tolerance=0.001, n_iter=200, n_burn=100)
     np.testing.assert_allclose(band.baseline_tolerance, 0.001)
-    assert band.zero_source == "instrument zero (assumed)"
-    assert band.background_amplitude.shape == (1, 0)
+    assert band.zero_source.startswith("no zero window")
+    # One run: nothing to align, so nothing was removed.
+    np.testing.assert_allclose(band.background_amplitude, jnp.zeros((1, 2)))
 
 
 def test_a_tolerance_per_wavelength_is_used_as_given() -> None:

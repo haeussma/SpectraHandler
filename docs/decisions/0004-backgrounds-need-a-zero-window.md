@@ -171,3 +171,63 @@ EXP0001 with the credible band (three 1 s shots, offset + tilt per run, window 5
 | ε439 of the oxidised enzyme | 10.4–15.1 | 11.9–13.6 | 12.4–12.5 | 12.5 |
 
 The shots agree within 0.1 µM in both runs.
+
+## Amendment, 2026-11-19 (second): baselines between runs are inferred in the fit
+
+The first amendment fitted every run's backgrounds separately in its own zero window.
+That used only the window and ignored that the runs share their spectra. It is replaced.
+
+1. **Each run after the first gets one amplitude per background relative to the first run,
+   sampled in the NumPyro model** with a flat prior. The runs share `Y`, so a difference
+   between runs that is constant in time and has a background's shape is identified from
+   the whole spectrum. A start comes from alternating a rank-K approximation with a
+   per-run least-squares fit; the model samples around it.
+2. **This is the default**, with an offset and a tilt, and needs no window.
+   `backgrounds=()` switches it off.
+3. **The zero window fixes only what all runs share.** After the alignment one set of
+   amplitudes is fitted in the window to the mean over all runs and subtracted. The
+   tolerance and its leverage factor are as in the first amendment. Without a window the
+   first run's zero is taken as it is, and the result says so.
+4. **With a zero window every reference gets background amplitudes of its own**, sampled.
+   The window moves the data's zero, and a reference that stays on its own zero then
+   contradicts the data: with offset + tilt and a 40 nm window no split was feasible until
+   the reference was freed. Its spectrum's spread is taken from the posterior of
+   `x_ref @ Y`, which includes that freedom. A blank can then serve as a reference as
+   measured. Without a window the references share the data's zero, as before.
+
+**Why the reference is not freed without a window.** On clean single-run data the
+reference's own offset came out 0 to 2.4 posterior sd from zero over three noise draws.
+An offset moves every channel together, so one unlucky draw puts the whole spectrum of the
+referenced species outside its band (0.05–0.81 of its values inside, where 0.98 was the
+figure with the reference on the data's zero).
+
+**A common baseline cannot come from a blank.** Every measurement has its own baseline, so
+a blank fixes its own zero and nothing else. This corrects a suggestion made while
+planning, that blanks as runs with known composition would pin the zero.
+
+Synthetic (two runs 0.010 AU apart, shared 0.002 AU wiggle, two noise seeds):
+
+| | amounts inside | spectrum values inside | offset of run 2 against run 1 (true −0.0100) | inferred noise / true |
+|---|---|---|---|---|
+| default, no window | 0.94–0.95 | 0.60 (zero unknown) | −0.0102 to −0.0104 | 1.04–1.05 |
+| offset, window 660–700 nm | 0.99–1.00 | 1.00 | −0.0099 | 1.00–1.02 |
+| offset + tilt, same window | 0.99 | 1.00, band 3 µM wide | −0.0098 to −0.0099 | 1.00–1.02 |
+| `backgrounds=()` | no feasible split | | | |
+
+EXP0001, binned by 10, three 1 s shots:
+
+| | offset + tilt, window, blank-calibrated tolerance, enzyme blank as measured | default, no window | `backgrounds=()` |
+|---|---|---|---|
+| median inferred noise (AU) | 0.00083 | 0.00079 | 0.00224 |
+| shots 2 and 3 against shot 1: offset | −0.0046, −0.0044 | −0.0045, −0.0044 | — |
+| posterior sd of those offsets / tilts | 0.00002 / 0.0001 | 0.00002 / 0.00009 | — |
+| converted at 1 s (µM) | 4.9–6.9 | 5.1–7.2 | 5.2–7.0 |
+| ε364 of the intermediate (46) | 43.8–57.8 | 43.3–55.3 | 44.2–53.9 |
+| ε439 of the oxidised enzyme (12.5) | 11.4–14.4 | 12.4–12.6 | 12.6–12.8 |
+
+The default removes the mismatch between shots that `backgrounds=()` turns into 2.7 times
+the noise. The first column's wider ε439 is the price of not trusting the blank's zero.
+
+**Limits.** Runs that share no species give the alignment nothing to hold on to. The
+uncertainty of the references' coordinates reaches the referenced species' spectra only,
+not the other species or the concentrations. The baseline is constant within a run.

@@ -32,7 +32,12 @@ from numpyro.diagnostics import split_gelman_rubin
 from numpyro.distributions import constraints
 from numpyro.infer import MCMC, NUTS, init_to_value
 
-from spectrahandler.curve_resolution.background import Background, fit_backgrounds
+from spectrahandler.curve_resolution.background import (
+    Background,
+    align_baselines,
+    background_shapes,
+    fit_backgrounds,
+)
 from spectrahandler.curve_resolution.dataset import SpectralDataset
 from spectrahandler.curve_resolution.noise import NoiseCorrelation
 
@@ -87,8 +92,12 @@ class CredibleBand:
         r_hat: Largest split R-hat over the identified part; close to 1 when the chains
             agree.
         background_names: Names of the backgrounds that were fitted and subtracted.
-        background_amplitude: Their fitted amplitudes, shape ``(n_run, n_background)``, in
-            absorbance units.
+        background_amplitude: The amplitudes removed from each run, shape
+            ``(n_run, n_background)``, in absorbance units: the common part from the zero
+            windows plus the posterior mean of each run's part relative to the first run.
+        background_draws: Posterior draws of each run's amplitudes relative to the first
+            run, around the starting alignment, shape ``(n_sample, n_run, n_background)``,
+            in absorbance units; zero for the first run.
         baseline_tolerance: By how much zero absorbance may be off at each wavelength, shape
             ``(n_wavelength,)``, in absorbance units. Spectra may dip below zero by this
             much per smallest run total, and the spectrum band is widened by the same
@@ -113,6 +122,7 @@ class CredibleBand:
     r_hat: float
     background_names: tuple[str, ...]
     background_amplitude: Array
+    background_draws: Array
     baseline_tolerance: Array
     zero_source: str
 
@@ -125,6 +135,7 @@ class _Identified(NamedTuple):
     y: Array  # (n_sample, n_species, n_wavelength): spectral patterns
     sigma: Array  # (n_sample, n_wavelength): noise sd per wavelength
     exponent: Array  # (n_sample,): growth of the noise with absorbance
+    baseline: Array  # (n_sample, n_run, n_background): amplitudes relative to the first run
     r_hat: float
 
 
@@ -140,6 +151,9 @@ def _sample_identified(
     power: Array | None,
     exponent: float | None,
     absorbance_scale: float,
+    shapes: Array,
+    n_run: int,
+    reference_baseline: bool,
     num_warmup: int,
     num_samples: int,
     num_chains: int,
@@ -162,10 +176,17 @@ def _sample_identified(
     residual spectrum has the power spectrum ``power``, evaluated on a circular grid (the
     Whittle likelihood).
 
+    Every run after the first gets one amplitude per background, with a flat prior: its
+    baseline relative to the first run. With ``reference_baseline`` every reference gets
+    such amplitudes too. The runs share ``Y``, so a
+    difference between runs that is constant in time and has a background's shape is
+    identified.
+
     Args:
         time_course: Data, shape ``(n_row, n_wavelength)``.
         ref_rows: Reference spectra, shape ``(n_ref, n_wavelength)``; ``n_ref`` may be 0.
-        ref_sd: Noise sd of each reference row, shape ``(n_ref,)``.
+        ref_sd: Standard deviation of each reference value, shape
+            ``(n_ref, n_wavelength)``.
         k: Rank, the number of species.
         key: PRNG key for NUTS.
         sigma: Known noise sd per wavelength, shape ``(n_wavelength,)``; ``None`` samples it.
@@ -176,6 +197,11 @@ def _sample_identified(
         exponent: Known growth of the noise with absorbance; ``None`` samples it.
         absorbance_scale: Absorbance units per unit of ``time_course``, so that the
             exponent refers to absorbance.
+        shapes: Background shapes, shape ``(n_wavelength, n_background)``; may have no
+            column.
+        n_run: Number of runs; the rows of ``time_course`` are run after run, each with
+            the same number of spectra.
+        reference_baseline: Give every reference background amplitudes of its own.
         num_warmup: NUTS warmup steps per chain.
         num_samples: NUTS draws per chain.
         num_chains: Chains, run vectorised.
@@ -204,6 +230,11 @@ def _sample_identified(
     y0, y_perp, b_scale = vt[:k] @ unwhiten, vt[k:] @ unwhiten, 1.0 / s[:k, None]
     to_x = whiten @ vt[:k].T
     level = time_course.mean(axis=0)
+    n_time, n_background = n_row // n_run, shapes.shape[1]
+    relative = n_run > 1 and n_background > 0
+    # Roughly the posterior sd of one amplitude, so that the latent has unit scale.
+    baseline_scale = 1.0 / jnp.sqrt(n_time * ((shapes / sigma0[:, None]) ** 2).sum(axis=0))
+    ref_scale = 1.0 / jnp.sqrt(((shapes[None] / ref_sd[:, :, None]) ** 2).sum(axis=1))
 
     def model() -> None:
         x = jnp.asarray(numpyro.sample("x", dist.ImproperUniform(constraints.real, (), (n_row, k))))
@@ -218,6 +249,15 @@ def _sample_identified(
             else numpyro.sample("sigma", dist.HalfNormal(noise_scale).expand([n_w]).to_event(1))
         )
         mean = x @ y
+        if relative:
+            shift = jnp.asarray(
+                numpyro.sample(
+                    "baseline",
+                    dist.ImproperUniform(constraints.real, (), (n_run - 1, n_background)),
+                )
+            )
+            amplitude = jnp.concatenate([jnp.zeros((1, n_background)), baseline_scale * shift])
+            mean = mean + jnp.repeat(amplitude @ shapes.T, n_time, axis=0)
         if exponent != 0.0:
             gamma = (
                 exponent
@@ -238,9 +278,17 @@ def _sample_identified(
             x_ref = jnp.asarray(
                 numpyro.sample("x_ref", dist.ImproperUniform(constraints.real, (), (n_ref, k)))
             )
-            numpyro.sample(
-                "reference", dist.Normal(x_ref @ y, ref_sd[:, None]).to_event(2), obs=ref_rows
-            )
+            ref_mean = x_ref @ y
+            if reference_baseline and n_background:
+                # A reference is a measurement with a baseline of its own.
+                ref_shift = jnp.asarray(
+                    numpyro.sample(
+                        "reference_baseline",
+                        dist.ImproperUniform(constraints.real, (), (n_ref, n_background)),
+                    )
+                )
+                ref_mean = ref_mean + (ref_scale * ref_shift) @ shapes.T
+            numpyro.sample("reference", dist.Normal(ref_mean, ref_sd).to_event(2), obs=ref_rows)
 
     init = {
         "x": (time_course / sigma0) @ to_x,
@@ -248,6 +296,8 @@ def _sample_identified(
         "sigma": sigma0,
         "x_ref": (ref_rows / sigma0) @ to_x,
         "exponent": jnp.asarray(0.5),
+        "baseline": jnp.zeros((n_run - 1, n_background)),
+        "reference_baseline": jnp.zeros((n_ref, n_background)),
     }
     kernel = NUTS(
         model, init_strategy=init_to_value(values=init), target_accept_prob=target_accept_prob
@@ -264,7 +314,7 @@ def _sample_identified(
     chains = mcmc.get_samples(group_by_chain=True)
     r_hat = max(
         float(split_gelman_rubin(chains[site]).max())
-        for site in ("x", "b", "sigma", "exponent")
+        for site in ("x", "b", "sigma", "exponent", "baseline", "reference_baseline")
         if site in chains
     )
     draws = mcmc.get_samples()
@@ -275,6 +325,15 @@ def _sample_identified(
         y=draws["y"],
         sigma=draws["sigma"] if sigma is None else jnp.tile(sigma, (n_sample, 1)),
         exponent=draws["exponent"] if exponent is None else jnp.full(n_sample, exponent),
+        baseline=jnp.concatenate(
+            [
+                jnp.zeros((n_sample, 1, n_background)),
+                baseline_scale * draws["baseline"]
+                if relative
+                else jnp.zeros((n_sample, n_run - 1, n_background)),
+            ],
+            axis=1,
+        ),
         r_hat=r_hat,
     )
 
@@ -288,7 +347,7 @@ def resolve_band(
     noise_scale: float | None = None,
     noise_correlation: NoiseCorrelation | None = None,
     noise_exponent: float | None = 0.0,
-    backgrounds: tuple[Background, ...] = (),
+    backgrounds: tuple[Background, ...] | None = None,
     zero_windows: tuple[tuple[float, float], ...] = (),
     baseline_tolerance: float | Array | None = None,
     baseline_smoothing: int = 20,
@@ -319,13 +378,20 @@ def resolve_band(
     ``level ** (1 / n_value)`` per test. The band then takes, over the feasible region, the
     central ``level`` posterior interval of every value.
 
-    Backgrounds are fitted per run inside ``zero_windows`` and subtracted before anything
-    else (:func:`fit_backgrounds`). What they leave in the windows is the baseline
+    Baselines come in two parts. How the runs' baselines differ from the first run's is
+    inferred in the fit, one amplitude per background and run: the runs share their
+    spectra, so such a difference cannot be chemistry. What all runs have in common
+    cannot be told from the species spectra, so it is fitted inside ``zero_windows`` and
+    subtracted (:func:`fit_backgrounds`). What is left in the windows is the baseline
     tolerance; outside the windows it is multiplied by one plus the leverage of the fit
     there. Every spectrum may dip below zero by the tolerance divided by the smallest
     run total, and the spectrum band is widened by the same amount on both sides, because
-    a baseline error that is constant in time ends up in the species spectra. Reference
-    spectra must already be baseline-free.
+    a baseline error that is constant in time ends up in the species spectra.
+
+    Without zero windows the data and the reference spectra are all taken to share the
+    instrument's zero. With zero windows the data's zero is the windows', and every
+    reference gets background amplitudes of its own, so a reference need not be
+    baseline-corrected beforehand.
 
     Args:
         dataset: Validated observations; ``mask`` must be all True.
@@ -342,11 +408,13 @@ def resolve_band(
             is multiplied by ``10 ** (noise_exponent * A)``. 0 is noise that does not depend
             on the signal, 0.5 is shot noise. ``None`` infers it, with a normal prior of
             mean 0.5 and sd 0.5.
-        backgrounds: Known spectral shapes to fit and subtract, one amplitude per run. Needs
-            ``zero_windows``.
+        backgrounds: Known spectral shapes of the baseline. ``None`` takes an offset and a
+            tilt; ``()`` assumes that no run has a baseline. With several runs, each run
+            gets one amplitude per shape relative to the first run.
         zero_windows: Wavelength intervals ``(low, high)``, in the dataset's unit, where no
-            chemical species absorbs. An assumption; the measured tolerance tells how well
-            it holds.
+            chemical species absorbs: they fix the baseline that all runs share. An
+            assumption; the measured tolerance tells how well it holds. Without them the
+            common zero is the first run's instrument zero.
         baseline_tolerance: By how much zero absorbance may be off, in absorbance units.
             One number is the tolerance inside the zero windows, carried outwards by the
             fit's leverage (a worst case), or the tolerance everywhere if there are no
@@ -372,8 +440,8 @@ def resolve_band(
     Raises:
         RuntimeError: If JAX float64 is not enabled.
         NotImplementedError: If ``dataset.mask`` has any False entry.
-        ValueError: If an argument is out of range, if only one of ``backgrounds`` and
-            ``zero_windows`` is given, for the errors of :func:`fit_backgrounds`, if
+        ValueError: If an argument is out of range, if ``zero_windows`` are given without
+            any background, for the errors of :func:`fit_backgrounds`, if
             ``baseline_tolerance`` is below the measured one, if there are not more spectra
             and wavelengths than species, if the mean run total or the absorbance RMS is not
             finite and positive, or if no feasible split is found: the rank, closure or
@@ -411,13 +479,22 @@ def resolve_band(
             raise ValueError(f"{name} must be {rule}, got {value}")
     if not bool(dataset.mask.all()):
         raise NotImplementedError("resolve_band requires fully measured runs")
-    if bool(backgrounds) != bool(zero_windows):
-        raise ValueError("backgrounds and zero_windows go together: give both or neither")
-    amplitude = jnp.zeros((dataset.n_run, 0))
+    if backgrounds is None:
+        backgrounds = (Background.offset(), Background.tilt())
+    if zero_windows and not backgrounds:
+        raise ValueError("zero_windows need at least one background to fit there")
+    shapes = background_shapes(backgrounds, dataset.wavelength)
+    # The runs' baselines relative to the first: a start here, sampled in the fit.
+    amplitude = jnp.zeros((dataset.n_run, shapes.shape[1]))
+    if dataset.n_run > 1 and backgrounds:
+        amplitude = align_baselines(dataset.absorbance, shapes, dataset.n_species)
+        dataset = replace(
+            dataset, absorbance=dataset.absorbance - (amplitude @ shapes.T)[:, None, :]
+        )
     given = None if baseline_tolerance is None else jnp.asarray(baseline_tolerance)
     delta = jnp.broadcast_to(0.0 if given is None else given, (dataset.n_wavelength,))
-    zero_source = "instrument zero (assumed)"
-    if backgrounds:
+    zero_source = "no zero window: zero is the instrument zero of the first run (assumed)"
+    if zero_windows:
         fit = fit_backgrounds(
             dataset.absorbance,
             dataset.wavelength,
@@ -425,6 +502,7 @@ def resolve_band(
             zero_windows=zero_windows,
             sigma=sigma,
             smoothing=baseline_smoothing,
+            shared=True,
         )
         if given is not None and fit.tolerance > float(given.min()):
             run, where = fit.tolerance_at
@@ -437,7 +515,7 @@ def resolve_band(
             # One number is the tolerance inside the windows; the fit's leverage carries it out.
             delta = (fit.tolerance if given is None else given) * fit.tolerance_factor
         dataset = replace(dataset, absorbance=fit.corrected)
-        amplitude = fit.amplitude
+        amplitude = amplitude + fit.amplitude
         windows = ", ".join(f"{low:g}-{high:g}" for low, high in zero_windows)
         zero_source = (
             f"zero windows {windows} {dataset.wavelength_unit}, tolerance "
@@ -455,11 +533,17 @@ def resolve_band(
     ref_idx = jnp.flatnonzero(has_ref)
     ref_comp = jnp.eye(k)[ref_idx]
 
+    totals = jnp.repeat(dataset.initial_state.sum(axis=1), dataset.n_time)
+    # A baseline error up to delta, constant in time, sits in the spectra as delta / total.
+    tol_s = delta / a_scale / totals.min()
+
     k_post, k_search, k_chain, k_noise = jax.random.split(key, 4)
     post = _sample_identified(
         time_course,
         dataset.reference_spectra[ref_idx],
-        dataset.reference_sigma[ref_idx],
+        # Beyond its own baseline, a reference may disagree with the data by the pattern
+        # that no background fits: the tolerance inside the zero windows.
+        jnp.sqrt(dataset.reference_sigma[ref_idx, None] ** 2 + tol_s.min() ** 2) * jnp.ones(n_w),
         k,
         k_post,
         sigma=None if sigma is None else jnp.broadcast_to(jnp.asarray(sigma) / a_scale, (n_w,)),
@@ -467,6 +551,10 @@ def resolve_band(
         power=None if noise_correlation is None else noise_correlation.spectrum(n_w),
         exponent=noise_exponent,
         absorbance_scale=a_scale,
+        shapes=shapes,
+        n_run=dataset.n_run,
+        # A zero window moves the data's zero, so a reference need not share it any more.
+        reference_baseline=bool(zero_windows),
         num_warmup=num_warmup,
         num_samples=num_samples,
         num_chains=num_chains,
@@ -484,15 +572,16 @@ def resolve_band(
     x = jnp.concatenate([x_time, post.x_ref.mean(axis=0)])
     cov_x = jax.vmap(lambda draws: jnp.cov(draws.T), in_axes=1)(post.x)
     cov_y = jax.vmap(lambda draws: jnp.cov(draws.T), in_axes=2)(post.y)
+    # A reference pins its species' spectrum to x_ref @ Y whatever the re-mixing, so that
+    # spectrum's spread is the spread of this product, which includes the uncertainty of
+    # x_ref and with it of the reference's own baseline.
+    sd_ref = jnp.einsum("dnk,dkw->dnw", post.x_ref, post.y).std(axis=0)
     y_pinv = jnp.linalg.pinv(y)
     z_region = float(norm.ppf(level ** (1.0 / (n_row * k + k * n_w))))
     z_margin = float(norm.ppf(0.5 + level / 2))
 
     # Equalities on vec(T), row-major. Closure: X @ T @ 1 = row totals, so T @ 1 = t_star.
     # References: x_ref @ T = the unit composition of the reference's species.
-    totals = jnp.repeat(dataset.initial_state.sum(axis=1), dataset.n_time)
-    # A baseline error up to delta, constant in time, sits in the spectra as delta / total.
-    tol_s = delta / a_scale / totals.min()
     row_sums = jnp.concatenate([totals, ref_comp.sum(axis=1)])
     t_star = jnp.linalg.lstsq(x, row_sums)[0]
     eq = jnp.concatenate([jnp.kron(jnp.eye(k), jnp.ones(k)), jnp.kron(x[n_row:], jnp.eye(k))])
@@ -510,7 +599,7 @@ def resolve_band(
         sp: Array = r @ y
         sd_c: Array = jnp.sqrt(jnp.einsum("ak,iab,bk->ik", t, cov_x, t))
         sd_s: Array = jnp.sqrt(jnp.einsum("ka,wab,kb->kw", r, cov_y, r))
-        return c, sp, sd_c, sd_s
+        return c, sp, sd_c, sd_s.at[ref_idx].set(sd_ref)
 
     def violation(theta: Array) -> Array:
         t = (t_particular + theta @ null).reshape(k, k)
@@ -580,7 +669,8 @@ def resolve_band(
         n_free=int(null.shape[0]),
         r_hat=post.r_hat,
         background_names=tuple(b.name for b in backgrounds),
-        background_amplitude=amplitude,
+        background_amplitude=amplitude + a_scale * post.baseline.mean(axis=0),
+        background_draws=a_scale * post.baseline,
         baseline_tolerance=delta,
         zero_source=zero_source,
     )
