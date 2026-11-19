@@ -32,7 +32,9 @@ posterior interval over all those splits. Its width is an honest statement of wh
 your data can and cannot tell you, provided that:
 
 - the number of species you give is right,
-- the noise is independent from point to point, with one level per wavelength,
+- the noise is independent from spectrum to spectrum, with one level per wavelength,
+  and independent between channels unless you give the fit a measured correlation
+  (see [Noise that neighbouring channels share](#noise-that-neighbouring-channels-share)),
 - the absorbance is concentrations times spectra, plus only the backgrounds you name
   (see [Baselines and backgrounds](#baselines-and-backgrounds)), and
 - closure holds as given.
@@ -164,9 +166,72 @@ What to do with what you see:
   or a per-run offset. Each is one more component; the band assumes there are none.
 - **Autocorrelation near 1 along wavelength:** the export was smoothed or interpolated
   along wavelength, as JASCO interval scans are. Neighbouring points then share their
-  noise, which breaks the independence the band assumes, and the noise level inferred
-  from the data is far too low; pass `sigma` measured along time on a stretch where
-  nothing reacts.
+  noise. Measure that with `measure_noise_correlation` and pass it as
+  `noise_correlation`; see
+  [Noise that neighbouring channels share](#noise-that-neighbouring-channels-share).
+
+## Noise that neighbouring channels share
+
+The band counts every wavelength channel as one independent measurement. Many
+detectors do not deliver that: the readout or the software averages or interpolates
+along wavelength, so neighbouring channels carry partly the same noise. Counting them
+as independent claims more information than the data hold, and the band comes out too
+narrow, or the fit fails with "no feasible split".
+
+Binning the channels is the usual fix, but it guesses the width and throws detail away.
+Instead, **measure the correlation and give it to the fit**. Any static sample will do:
+a blank, or the end of a run where the spectra no longer change.
+
+```python
+import dataclasses
+
+from spectrahandler.curve_resolution import make_correlated_noise, measure_noise_correlation
+
+# 128 channels whose noise is averaged over 8 neighbours, as a detector might do.
+clean, _, _ = make_realistic_dataset(jax.random.key(0), noise=0.0, n_wavelength=128)
+noise = 0.002 * make_correlated_noise(jax.random.key(3), clean.n_time, 128, width=8)
+noisy = dataclasses.replace(clean, absorbance=clean.absorbance + noise[None])
+
+# A blank on the same instrument: 100 spectra of nothing but noise.
+blank = 0.002 * make_correlated_noise(jax.random.key(99), 100, 128, width=8)
+correlation = measure_noise_correlation(blank)
+
+print(correlation.correlation(10).round(2))  # by distance in channels
+print(f"shared by the whole spectrum: {correlation.shared:.2f}")
+
+band = resolve_band(noisy, jax.random.key(1), noise_correlation=correlation)
+```
+
+The printed correlation falls from 1 at distance 0 to 0.83 at one channel and to about
+zero at eight: the average over eight channels, read off the data without being told.
+`shared` is the part of the noise that every channel of a spectrum has in common, such
+as a flicker of the lamp.
+
+- **Measure on the same channel spacing** as the data you resolve, and unbinned data
+  can then go in as they are.
+- **The sample must be static.** The noise is taken from the differences between
+  consecutive spectra; a reaction in progress would be mistaken for noise.
+- **More blank spectra, better measurement:** about 100 give every part of the
+  correlation to 10 %.
+- **The noise level is still inferred**, one per wavelength, with its posterior. Only
+  the correlation between channels comes from the blank.
+
+### Noise that grows with the signal
+
+Where a sample absorbs, less light reaches the detector and the absorbance is noisier.
+For a detector limited by photon counting the noise grows as `10 ** (0.5 * A)`.
+`noise_exponent` sets that exponent: `0.0` (the default) is noise that does not depend
+on the signal, `0.5` is photon counting, and `None` infers it from the data:
+
+```python
+band = resolve_band(noisy, jax.random.key(1), noise_exponent=None)
+print(f"{float(band.noise_exponent_draws.mean()):.2f}")
+```
+
+The data can only tell if the absorbance varies enough: with spectra reaching 1.3 AU
+the exponent comes out to ±0.06, with spectra below 0.35 AU, as here, only to about
+±0.2, and the prior (0.5 ± 0.5) does much of the work. `sigma` is then the noise at
+each wavelength's average absorbance.
 
 ## Baselines and backgrounds
 
@@ -240,6 +305,8 @@ amount.
   one.
 - `noise_scale`: the scale of the prior on the inferred noise levels. The default is
   the RMS absorbance, which leaves the data to decide.
+- `noise_correlation`, `noise_exponent`: see
+  [Noise that neighbouring channels share](#noise-that-neighbouring-channels-share).
 - `backgrounds`, `zero_windows`, `baseline_tolerance`, `baseline_smoothing`: see
   [Baselines and backgrounds](#baselines-and-backgrounds).
 - `num_warmup`, `num_samples`, `num_chains`, `target_accept_prob`: the NUTS sampler of

@@ -34,6 +34,7 @@ from numpyro.infer import MCMC, NUTS, init_to_value
 
 from spectrahandler.curve_resolution.background import Background, fit_backgrounds
 from spectrahandler.curve_resolution.dataset import SpectralDataset
+from spectrahandler.curve_resolution.noise import NoiseCorrelation
 
 __all__ = ["CredibleBand", "resolve_band"]
 
@@ -78,6 +79,9 @@ class CredibleBand:
             ``(n_wavelength,)``, in absorbance units.
         sigma_draws: Posterior draws of the same, shape ``(n_sample, n_wavelength)``. One
             repeated row if ``sigma`` was given.
+        noise_exponent_draws: Posterior draws of the growth of the noise with absorbance,
+            shape ``(n_sample,)``; one repeated value if ``noise_exponent`` was given. With
+            a non-zero exponent ``sigma`` is the noise at each wavelength's mean absorbance.
         level: Credibility level of the band.
         n_free: Free re-mixing numbers left after closure and references.
         r_hat: Largest split R-hat over the identified part; close to 1 when the chains
@@ -103,6 +107,7 @@ class CredibleBand:
     spectra_draws: Array
     sigma: Array
     sigma_draws: Array
+    noise_exponent_draws: Array
     level: float
     n_free: int
     r_hat: float
@@ -119,6 +124,7 @@ class _Identified(NamedTuple):
     x_ref: Array  # (n_sample, n_ref, n_species): row coordinates of the references
     y: Array  # (n_sample, n_species, n_wavelength): spectral patterns
     sigma: Array  # (n_sample, n_wavelength): noise sd per wavelength
+    exponent: Array  # (n_sample,): growth of the noise with absorbance
     r_hat: float
 
 
@@ -131,6 +137,9 @@ def _sample_identified(
     *,
     sigma: Array | None,
     noise_scale: float,
+    power: Array | None,
+    exponent: float | None,
+    absorbance_scale: float,
     num_warmup: int,
     num_samples: int,
     num_chains: int,
@@ -138,12 +147,20 @@ def _sample_identified(
 ) -> _Identified:
     """Posterior of the rank-``k`` product and the noise per wavelength, in a fixed gauge.
 
-    The model is ``time_course ~ Normal(X @ Y, sigma)`` with independent noise and one
-    ``sigma`` per wavelength; each reference row is ``Normal(x_ref @ Y, ref_sd)``. The gauge
-    is ``Y = (y0 + B @ y_perp) * sigma0``: ``y0`` holds the leading right singular vectors
-    of the noise-scaled data, ``y_perp`` their complement. Every rank-``k`` matrix near the
+    The model is ``time_course ~ Normal(X @ Y, noise)`` with one ``sigma`` per wavelength;
+    each reference row is ``Normal(x_ref @ Y, ref_sd)``. The gauge is
+    ``Y = (y0 + B @ y_perp) * sigma0``: ``y0`` holds the leading right singular vectors
+    of the noise-whitened data, ``y_perp`` their complement. Every rank-``k`` matrix near the
     data has exactly one such factorisation, so ``X``, ``B`` and ``sigma`` are identified.
-    Priors: flat on ``X``, ``B`` and ``x_ref``; half-normal on ``sigma``.
+    Priors: flat on ``X``, ``B`` and ``x_ref``; half-normal on ``sigma``; normal with mean
+    0.5 and sd 0.5 on the exponent when it is sampled.
+
+    The noise standard deviation of one point is ``sigma * 10 ** (exponent * (A - A_mean))``,
+    with ``A`` the modelled absorbance and ``A_mean`` the mean absorbance at that wavelength,
+    so ``sigma`` is the noise at the average signal. Noise is independent between spectra.
+    Along wavelength it is independent if ``power`` is ``None``; otherwise each scaled
+    residual spectrum has the power spectrum ``power``, evaluated on a circular grid (the
+    Whittle likelihood).
 
     Args:
         time_course: Data, shape ``(n_row, n_wavelength)``.
@@ -153,13 +170,19 @@ def _sample_identified(
         key: PRNG key for NUTS.
         sigma: Known noise sd per wavelength, shape ``(n_wavelength,)``; ``None`` samples it.
         noise_scale: Scale of the half-normal prior on ``sigma``.
+        power: Power spectrum of unit-variance noise along wavelength, shape
+            ``(n_wavelength,)`` in ``jnp.fft.fft`` order with mean 1; ``None`` for
+            independent noise.
+        exponent: Known growth of the noise with absorbance; ``None`` samples it.
+        absorbance_scale: Absorbance units per unit of ``time_course``, so that the
+            exponent refers to absorbance.
         num_warmup: NUTS warmup steps per chain.
         num_samples: NUTS draws per chain.
         num_chains: Chains, run vectorised.
         target_accept_prob: NUTS target acceptance probability.
 
     Returns:
-        The draws and the largest split R-hat over ``X``, ``B`` and ``sigma``.
+        The draws and the largest split R-hat over the sampled sites.
     """
     n_row, n_w = time_course.shape
     n_ref = ref_rows.shape[0]
@@ -170,8 +193,17 @@ def _sample_identified(
         u, s, vt = jnp.linalg.svd(time_course / sigma0, full_matrices=False)
         resid = time_course - ((u[:, :k] * s[:k]) @ vt[:k]) * sigma0
         sigma0 = jnp.sqrt((resid**2).sum(axis=0) / (n_row - k))
-    _, s, vt = jnp.linalg.svd(time_course / sigma0, full_matrices=True)
-    y0, y_perp, b_scale = vt[:k], vt[k:], 1.0 / s[:k, None]
+    # The gauge is set up in coordinates where the noise is white along wavelength, so that
+    # the latents are equally well determined and NUTS mixes as with independent noise.
+    whiten = unwhiten = jnp.eye(n_w)
+    if power is not None:
+        basis = jnp.fft.fft(jnp.eye(n_w), axis=1)
+        whiten = jnp.fft.ifft(basis / jnp.sqrt(power), axis=1).real
+        unwhiten = jnp.fft.ifft(basis * jnp.sqrt(power), axis=1).real
+    _, s, vt = jnp.linalg.svd((time_course / sigma0) @ whiten, full_matrices=True)
+    y0, y_perp, b_scale = vt[:k] @ unwhiten, vt[k:] @ unwhiten, 1.0 / s[:k, None]
+    to_x = whiten @ vt[:k].T
+    level = time_course.mean(axis=0)
 
     def model() -> None:
         x = jnp.asarray(numpyro.sample("x", dist.ImproperUniform(constraints.real, (), (n_row, k))))
@@ -185,7 +217,23 @@ def _sample_identified(
             if sigma is not None
             else numpyro.sample("sigma", dist.HalfNormal(noise_scale).expand([n_w]).to_event(1))
         )
-        numpyro.sample("absorbance", dist.Normal(x @ y, noise).to_event(2), obs=time_course)
+        mean = x @ y
+        if exponent != 0.0:
+            gamma = (
+                exponent
+                if exponent is not None
+                else numpyro.sample("exponent", dist.Normal(0.5, 0.5))
+            )
+            noise = noise * 10.0 ** (gamma * absorbance_scale * (mean - level))
+        if power is None:
+            numpyro.sample("absorbance", dist.Normal(mean, noise).to_event(2), obs=time_course)
+        else:
+            # Whittle: the scaled residual spectra are independent across frequency, each
+            # frequency with variance `power`. Terms that do not depend on a latent are left out.
+            scaled = (time_course - mean) / noise
+            energy = (jnp.abs(jnp.fft.fft(scaled, axis=-1)) ** 2 / power).sum() / n_w
+            log_scale = jnp.log(jnp.broadcast_to(noise, mean.shape)).sum()
+            numpyro.factor("absorbance", -0.5 * energy - log_scale)
         if n_ref:
             x_ref = jnp.asarray(
                 numpyro.sample("x_ref", dist.ImproperUniform(constraints.real, (), (n_ref, k)))
@@ -195,10 +243,11 @@ def _sample_identified(
             )
 
     init = {
-        "x": (time_course / sigma0) @ y0.T,
+        "x": (time_course / sigma0) @ to_x,
         "b": jnp.zeros((k, n_w - k)),
         "sigma": sigma0,
-        "x_ref": (ref_rows / sigma0) @ y0.T,
+        "x_ref": (ref_rows / sigma0) @ to_x,
+        "exponent": jnp.asarray(0.5),
     }
     kernel = NUTS(
         model, init_strategy=init_to_value(values=init), target_accept_prob=target_accept_prob
@@ -215,7 +264,7 @@ def _sample_identified(
     chains = mcmc.get_samples(group_by_chain=True)
     r_hat = max(
         float(split_gelman_rubin(chains[site]).max())
-        for site in ("x", "b", "sigma")
+        for site in ("x", "b", "sigma", "exponent")
         if site in chains
     )
     draws = mcmc.get_samples()
@@ -225,6 +274,7 @@ def _sample_identified(
         x_ref=draws["x_ref"] if n_ref else jnp.zeros((n_sample, 0, k)),
         y=draws["y"],
         sigma=draws["sigma"] if sigma is None else jnp.tile(sigma, (n_sample, 1)),
+        exponent=draws["exponent"] if exponent is None else jnp.full(n_sample, exponent),
         r_hat=r_hat,
     )
 
@@ -236,6 +286,8 @@ def resolve_band(
     level: float = 0.95,
     sigma: float | Array | None = None,
     noise_scale: float | None = None,
+    noise_correlation: NoiseCorrelation | None = None,
+    noise_exponent: float | None = 0.0,
     backgrounds: tuple[Background, ...] = (),
     zero_windows: tuple[tuple[float, float], ...] = (),
     baseline_tolerance: float | Array | None = None,
@@ -283,6 +335,13 @@ def resolve_band(
             wavelength. ``None`` infers one per wavelength.
         noise_scale: Scale of the half-normal prior on each wavelength's noise standard
             deviation, in absorbance units. ``None`` takes the RMS absorbance, which is weak.
+        noise_correlation: How the noise of neighbouring channels is correlated, from
+            :func:`measure_noise_correlation` on data with the same channel spacing.
+            ``None`` takes the noise as independent between channels.
+        noise_exponent: Growth of the noise with absorbance: the noise standard deviation
+            is multiplied by ``10 ** (noise_exponent * A)``. 0 is noise that does not depend
+            on the signal, 0.5 is shot noise. ``None`` infers it, with a normal prior of
+            mean 0.5 and sd 0.5.
         backgrounds: Known spectral shapes to fit and subtract, one amplitude per run. Needs
             ``zero_windows``.
         zero_windows: Wavelength intervals ``(low, high)``, in the dataset's unit, where no
@@ -405,6 +464,9 @@ def resolve_band(
         k_post,
         sigma=None if sigma is None else jnp.broadcast_to(jnp.asarray(sigma) / a_scale, (n_w,)),
         noise_scale=1.0 if noise_scale is None else noise_scale / a_scale,
+        power=None if noise_correlation is None else noise_correlation.spectrum(n_w),
+        exponent=noise_exponent,
+        absorbance_scale=a_scale,
         num_warmup=num_warmup,
         num_samples=num_samples,
         num_chains=num_chains,
@@ -513,6 +575,7 @@ def resolve_band(
         spectra_draws=s_scale * (sp + sd_s * jax.random.normal(ks, sp.shape))[:, None],
         sigma=sigma_draws.mean(axis=0),
         sigma_draws=sigma_draws,
+        noise_exponent_draws=post.exponent,
         level=level,
         n_free=int(null.shape[0]),
         r_hat=post.r_hat,

@@ -10,7 +10,7 @@ from jax import Array
 
 from spectrahandler.curve_resolution.dataset import SpectralDataset
 
-__all__ = ["make_easy_dataset", "make_realistic_dataset"]
+__all__ = ["make_correlated_noise", "make_easy_dataset", "make_realistic_dataset"]
 
 #: Per species, its Gaussian bands as (centre nm, width nm, peak height).
 type _Bands = tuple[tuple[tuple[float, float, float], ...], ...]
@@ -133,3 +133,52 @@ def make_realistic_dataset(
         ``(n_run, n_time, n_species)``.
     """
     return _make_dataset(key, _REALISTIC_BANDS, n_time, n_wavelength, noise, total_concentration)
+
+
+def make_correlated_noise(
+    key: Array,
+    n_spectra: int,
+    n_wavelength: int,
+    *,
+    width: int = 12,
+    shared: float = 0.05,
+    white: float = 0.05,
+) -> Array:
+    """Generate unit-variance noise that neighbouring wavelength channels share.
+
+    It imitates a detector whose readout averages neighbouring pixels: independent pixel
+    noise averaged over ``width`` channels, plus a part that the whole spectrum has in
+    common, plus a little noise that is independent per channel. Spectra are independent of
+    each other. Multiply by a noise level, one number or one per wavelength.
+
+    Args:
+        key: PRNG key.
+        n_spectra: Number of spectra.
+        n_wavelength: Number of channels.
+        width: Number of neighbouring channels averaged; 1 gives no averaging.
+        shared: Fraction of the variance common to all channels of a spectrum.
+        white: Fraction of the variance that is independent per channel.
+
+    Returns:
+        Shape ``(n_spectra, n_wavelength)``, each channel with variance 1. The correlation
+        between two channels ``k`` apart is
+        ``shared + (1 - shared - white) * max(0, 1 - k / width)`` for ``k > 0``.
+
+    Raises:
+        ValueError: If ``width`` is below 1 or the fractions are negative or sum to more
+            than 1.
+    """
+    if width < 1 or min(shared, white) < 0 or shared + white > 1:
+        raise ValueError(
+            f"need width >= 1 and non-negative fractions summing to at most 1, got width "
+            f"{width}, shared {shared}, white {white}"
+        )
+    k_pixel, k_shared, k_white = jax.random.split(key, 3)
+    pixel = jax.random.normal(k_pixel, (n_spectra, n_wavelength + width - 1))
+    total = jnp.cumsum(jnp.concatenate([jnp.zeros((n_spectra, 1)), pixel], axis=1), axis=1)
+    averaged = (total[:, width:] - total[:, :-width]) / jnp.sqrt(width)
+    return (
+        jnp.sqrt(1.0 - shared - white) * averaged
+        + jnp.sqrt(shared) * jax.random.normal(k_shared, (n_spectra, 1))
+        + jnp.sqrt(white) * jax.random.normal(k_white, (n_spectra, n_wavelength))
+    )
